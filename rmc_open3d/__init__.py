@@ -16,3 +16,15 @@ Functions:
     utils.read_triangle_mesh: Reads triangle mesh data from file.
     utils.get_point_cloud_from_triangle_mesh: Convenience function to obtain point clouds from triangle meshes.
 """
+
+import logging
+
+logger = logging.getLogger(__name__)
+
+
+def get_logger() -> logging.Logger:
+    return logger
+
+
+def set_logging_level(level: int) -> None:
+    logger.setLevel(level=level)
