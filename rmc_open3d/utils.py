@@ -90,8 +90,8 @@ def eval_data(data: InputTypes, **kwargs: Any) -> PointCloud:
 
 def process_point_cloud(point_cloud: PointCloud,
                         downsample: DownsampleTypes = DownsampleTypes.NONE,
-                        downsample_factor: float = 1.0,
-                        transform: np.ndarray = np.eye(4),
+                        downsample_factor: Union[float, int] = 1.0,
+                        transform: np.ndarray = None,
                         scale: float = 1.0,
                         estimate_normals: bool = False,
                         fast_normal_computation: bool = True,
@@ -102,11 +102,9 @@ def process_point_cloud(point_cloud: PointCloud,
                         search_param_knn: int = 30,
                         search_param_radius: float = 100.0,
                         camera_location_or_direction: np.ndarray = np.zeros(3),
-                        inplace: bool = False,
-                        draw: bool = False):
+                        draw: bool = False) -> PointCloud:
 
-    _point_cloud = point_cloud if inplace else copy.deepcopy(point_cloud)
-
+    _point_cloud = copy.deepcopy(point_cloud)
     assert isinstance(downsample, DownsampleTypes)
     if downsample != DownsampleTypes.NONE:
         logger.debug(f"{downsample} downsampling point cloud  with factor {downsample_factor}.")
@@ -120,17 +118,17 @@ def process_point_cloud(point_cloud: PointCloud,
             _point_cloud = _point_cloud.uniform_down_sample(every_k_points=int(downsample_factor))
         logger.debug(f"Number of points after downsampling: {len(np.asarray(_point_cloud.points))}")
 
-    if np.any(transform != np.eye(4)):
+    if transform is not None:
         _transform = np.asarray(transform)
         if _transform.size in [3, 4]:
             _point_cloud.translate(translation=_transform.ravel()[:3], relative=True)
         elif _transform.size == 9:
             _point_cloud.rotate(R=_transform.reshape(3, 3), center=_point_cloud.get_center())
-        elif _transform.size == 12:
+        elif _transform.size == 16:
             _point_cloud.transform(_transform.reshape(4, 4))
         else:
             raise ValueError(
-                f"`transform` needs to be a valid translation, rotation or transformation in natural or homegeneous coordiantes, i.e. size 3, 4, 9 or 12."
+                f"`transform` needs to be a valid translation, rotation or transformation in natural or homegeneous coordiantes, i.e. size 3, 4, 9 or 16."
             )
 
     if scale != 1.0:
@@ -151,7 +149,7 @@ def process_point_cloud(point_cloud: PointCloud,
 
     if normalize_normals:
         if _point_cloud.has_normals():
-            _point_cloud.normalize_normals()
+            _point_cloud = _point_cloud.normalize_normals()
         else:
             logger.warning("Point cloud doesnt' have normals so can't normalize them.")
 

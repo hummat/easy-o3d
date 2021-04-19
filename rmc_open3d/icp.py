@@ -85,9 +85,10 @@ class ICP(RegistrationInterface):
             _criteria = kwargs.get("criteria", self.criteria)
 
         max_dist = kwargs.get("max_correspondence_distance", self.max_correspondence_distance)
-        # Compute based on object size
+        # Heuristic: One 1th of object size
         if max_dist == -1.0:
-            max_dist = (np.asarray(_source.get_max_bound()) - np.asarray(_source.get_min_bound())).max()
+            max_dist = 0.1 * (np.asarray(_source.get_max_bound()) - np.asarray(_source.get_min_bound())).max()
+            logger.debug(f"Using {max_dist} as maximum correspondence distance.")
 
         init = kwargs.get("init", np.eye(4))
         if crop_target_around_source:
