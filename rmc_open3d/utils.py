@@ -1,5 +1,7 @@
 import copy
+import json
 import logging
+import os
 from enum import Flag, auto
 from typing import Any, List, Union
 
@@ -230,16 +232,16 @@ def get_point_cloud_from_points(points: np.ndarray) -> PointCloud:
 
 def sample_point_cloud_from_triangle_mesh(mesh_or_filename: Union[TriangleMesh, str],
                                           number_of_points: int,
-                                          sample_style: SampleTypes = SampleTypes.UNIFORMLY,
+                                          sample_type: SampleTypes = SampleTypes.UNIFORMLY,
                                           **kwargs: Any) -> PointCloud:
     """Convenience function to obtain point clouds from triangle meshes.
 
     Args:
         mesh_or_filename (Union[o3d.geometry.TriangleMesh, str]): The triangle mesh from which
                                                                   the point cloud is sampled.
-        number_of_points (int): number_of_points: Number of points to sample from the triangle mesh.
-        sample_style (SampleTypes): sample_style: How to sample the points from the triangle mesh.
-                                                  Either `UNIFORMLY` or `POISSON_DISK`. Default: `UNIFORMLY`.
+        number_of_points (int): Number of points to sample from the triangle mesh.
+        sample_type (SampleTypes): How to sample the points from the triangle mesh.
+                                   Either `UNIFORMLY` or `POISSON_DISK`. Default: `UNIFORMLY`.
         kwargs (any): Optional additional keyword arguments.
 
     Returns:
@@ -252,19 +254,20 @@ def sample_point_cloud_from_triangle_mesh(mesh_or_filename: Union[TriangleMesh, 
     else:
         raise TypeError(f"Can't read mesh of type {type(mesh_or_filename)}.")
 
-    if sample_style == SampleTypes.UNIFORMLY:
+    if sample_type == SampleTypes.UNIFORMLY:
         return mesh.sample_points_uniformly(number_of_points=number_of_points, **kwargs)
-    elif sample_style == SampleTypes.POISSON_DISK:
+    elif sample_type == SampleTypes.POISSON_DISK:
         return mesh.sample_points_poisson_disk(number_of_points=number_of_points, **kwargs)
     else:
-        raise ValueError(f"Sample style {sample_style} not supported.")
+        raise ValueError(f"Sample style {sample_type} not supported.")
 
 
-def get_camera_intrinsic_from_array(image_or_path: ImageTypes, camera_intrinsic: np.ndarray) -> PinholeCameraIntrinsic:
+def get_camera_intrinsic_from_array(image_or_path: ImageTypes, camera_intrinsic: Union[np.ndarray,
+                                                                                       list]) -> PinholeCameraIntrinsic:
     assert camera_intrinsic.size == 9, "Camera intrinsic must be 9 values but are {camera_intrinsic.size}."
     intrinsic = camera_intrinsic
     if isinstance(intrinsic, list):
-        intrinsic = np.array(camera_intrinsic)
+        intrinsic = np.asarray(camera_intrinsic)
     intrinsic = intrinsic.reshape(3, 3)
     image = eval_image_type(image_or_path=image_or_path)
     if isinstance(image, RGBDImage):
@@ -328,13 +331,17 @@ def eval_image_type(image_or_path: RGBDImageTypes, **kwargs: Any) -> Union[Image
 def eval_camera_intrinsic_type(image_or_path: ImageTypes, camera_intrinsic: CameraTypes):
     if isinstance(camera_intrinsic, (PinholeCameraIntrinsic, PinholeCameraIntrinsicParameters)):
         return camera_intrinsic
-    elif isinstance(camera_intrinsic, np.ndarray):
+    elif isinstance(camera_intrinsic, (np.ndarray, list)):
         return get_camera_intrinsic_from_array(image_or_path=image_or_path, camera_intrinsic=camera_intrinsic)
     else:
         raise TypeError(f"Camera intrinsic type {type(camera_intrinsic)} not supported.")
 
 
-def convert_depth_image_to_point_cloud(image_or_path: ImageTypes, camera_intrinsic: CameraTypes,
+def convert_depth_image_to_point_cloud(image_or_path: ImageTypes,
+                                       camera_intrinsic: CameraTypes,
+                                       camera_extrinsic: Union[np.ndarray, list] = np.eye(4),
+                                       depth_scale: float = 1000.0,
+                                       depth_trunc: float = 1000.0,
                                        **kwargs: Any) -> PointCloud:
     """Convenience function to obtain point clouds from depth images.
 
@@ -353,34 +360,103 @@ def convert_depth_image_to_point_cloud(image_or_path: ImageTypes, camera_intrins
     assert isinstance(image, Image)
     assert len(np.asarray(image).shape) == 2, f"Depth image must have shape WxH but is {image.shape}."
     intrinsic = eval_camera_intrinsic_type(image_or_path=image, camera_intrinsic=camera_intrinsic)
+    extrinsic = np.asarray(camera_extrinsic).reshape(4, 4)
 
     nkwargs = {
         "depth": image,
         "intrinsic": intrinsic,
-        "extrinsic": kwargs.get("extrinsic", np.eye(4)),
-        "depth_scale": kwargs.get("depth_scale", 1.0),
-        "depth_trunc": kwargs.get("depth_trunc", 10000.0),
+        "extrinsic": extrinsic,
+        "depth_scale": depth_scale,
+        "depth_trunc": depth_trunc,
         "stride": kwargs.get("stride", 1),
         "project_valid_depth_only": kwargs.get("project_valid_depth_only", True)
     }
     return PointCloud.create_from_depth_image(**nkwargs)
 
 
-def convert_rgbd_image_to_point_cloud(rgbd_image_or_path: RGBDImageTypes, camera_intrinsic: CameraTypes,
+def convert_rgbd_image_to_point_cloud(rgbd_image_or_path: RGBDImageTypes,
+                                      camera_intrinsic: CameraTypes,
+                                      camera_extrinsic: Union[np.ndarray, list] = np.eye(4),
+                                      depth_scale: float = 1000.0,
+                                      depth_trunc: float = 1000.0,
                                       **kwargs: Any) -> PointCloud:
     nkwargs = {
-        "depth_scale": kwargs.get("depth_scale", 1.0),
-        "depth_trunc": kwargs.get("depth_trunc", 10000.0),
+        "depth_scale": depth_scale,
+        "depth_trunc": depth_trunc,
         "convert_rgb_to_intensity": kwargs.get("convert_rgb_to_intensity", False),
     }
     rgbd_image = eval_image_type(image_or_path=rgbd_image_or_path, **nkwargs)
     assert isinstance(rgbd_image, RGBDImage)
 
     intrinsic = eval_camera_intrinsic_type(image_or_path=rgbd_image, camera_intrinsic=camera_intrinsic)
+    extrinsic = np.asarray(camera_extrinsic).reshape(4, 4)
     nkwargs = {
         "image": rgbd_image,
         "intrinsic": intrinsic,
-        "extrinsic": kwargs.get("extrinsic", np.eye(4)),
+        "extrinsic": extrinsic,
         "project_valid_depth_only": kwargs.get("project_valid_depth_only", True)
     }
     return PointCloud.create_from_rgbd_image(**nkwargs)
+
+
+def get_transformation_matrix_from_xyz(rotation_xyz: Union[np.array, list] = np.zeros(3),
+                                       translation_xyz: Union[np.array, list] = np.zeros(3)) -> np.ndarray:
+    rx, ry, rz = np.asarray(rotation_xyz).ravel()[:3]
+    tx, ty, tz = np.asarray(translation_xyz).ravel()[:3]
+    R = PointCloud.get_rotation_matrix_from_xyz(np.array([np.radians(rx), np.radians(ry), np.radians(rz)]))
+    t = [tx, ty, tz]
+    T = np.eye(4)
+    T[:3, :3] = R
+    T[:3, 3] = t
+
+    return T
+
+
+def get_transformation_matrix_from_quaternion(rotation_wxyz: Union[np.array, list] = np.zeros(4),
+                                              translation_xyz: Union[np.array, list] = np.zeros(3)) -> np.ndarray:
+    rotation = np.asarray(rotation_wxyz).ravel()[:4]
+    tx, ty, tz = np.asarray(translation_xyz).ravel()[:3]
+    R = PointCloud.get_rotation_matrix_from_quaternion(rotation=rotation)
+    t = [tx, ty, tz]
+    T = np.eye(4)
+    T[:3, :3] = R
+    T[:3, 3] = t
+
+    return T
+
+
+def get_camera_parameters_from_blenderproc_bopwriter(scene_id: Union[int, str], path_to_scene_camera_json: str,
+                                                     path_to_camera_json,
+                                                     output_path: None) -> o3d.camera.PinholeCameraParameters:
+    scene_id = str(scene_id)
+
+    # Get camera extrinsic
+    with open(path_to_scene_camera_json) as f:
+        extrinsic_data = json.load(f)
+
+    R_w2c = np.asarray(extrinsic_data[scene_id]['cam_R_w2c']).reshape(3, 3)
+    t_w2c = np.asarray(extrinsic_data[scene_id]['cam_t_w2c']) / 1000.0
+    T_w2c = np.eye(4)
+    T_w2c[:3, :3] = R_w2c
+    T_w2c[:3, 3] = t_w2c
+    extrinsic = T_w2c
+
+    # Get camera intrinsic
+    with open(path_to_camera_json) as f:
+        intrinsic_data = json.load(f)
+
+    width, height = intrinsic_data['width'], intrinsic_data['height']
+    cx, cy = intrinsic_data['cx'], intrinsic_data['cy']
+    fx, fy = intrinsic_data['fx'], intrinsic_data['fy']
+    intrinsic = o3d.camera.PinholeCameraIntrinsic(width=width, height=height, fx=fx, fy=fy, cx=cx, cy=cy)
+
+    # Set camera parameters
+    camera_parameters = o3d.camera.PinholeCameraParameters()
+    camera_parameters.intrinsic = intrinsic
+    camera_parameters.extrinsic = extrinsic
+
+    # Maybe write to file
+    if output_path is not None:
+        o3d.io.write_pinhole_camera_parameters(os.path.join(output_path, "camera_parameters.json"), camera_parameters)
+
+    return camera_parameters

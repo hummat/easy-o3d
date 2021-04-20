@@ -26,5 +26,5 @@ def get_logger() -> logging.Logger:
     return logger
 
 
-def set_logging_level(level: int) -> None:
+def set_logger_level(level: int) -> None:
     logger.setLevel(level=level)

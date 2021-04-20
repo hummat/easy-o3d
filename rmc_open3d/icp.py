@@ -69,8 +69,10 @@ class ICP(RegistrationInterface):
     def run(self,
             source: InputTypes,
             target: InputTypes,
+            init: np.ndarray = np.eye(4),
             crop_target_around_source: bool = False,
             crop_scale: float = 1.0,
+            visualize: bool = False,
             **kwargs: Any) -> RegistrationResult:
 
         _source = self._eval_data(data=source, **kwargs)
@@ -87,10 +89,9 @@ class ICP(RegistrationInterface):
         max_dist = kwargs.get("max_correspondence_distance", self.max_correspondence_distance)
         # Heuristic: One 1th of object size
         if max_dist == -1.0:
-            max_dist = 0.1 * (np.asarray(_source.get_max_bound()) - np.asarray(_source.get_min_bound())).max()
+            max_dist = (np.asarray(_source.get_max_bound()) - np.asarray(_source.get_min_bound())).max()
             logger.debug(f"Using {max_dist} as maximum correspondence distance.")
 
-        init = kwargs.get("init", np.eye(4))
         if crop_target_around_source:
             bounding_box = copy.deepcopy(_source).transform(init).get_axis_aligned_bounding_box()
             bounding_box = bounding_box.scale(scale=crop_scale, center=bounding_box.get_center())
@@ -114,12 +115,17 @@ class ICP(RegistrationInterface):
                 # If cached before, replace with new version with estimated normals
                 self.replace_in_cache(data={target: _target})
 
-        return self.algorithm(source=_source,
-                              target=_target,
-                              max_correspondence_distance=max_dist,
-                              init=init,
-                              estimation_method=estimation_method,
-                              criteria=_criteria)
+        result = self.algorithm(source=_source,
+                                target=_target,
+                                max_correspondence_distance=max_dist,
+                                init=init,
+                                estimation_method=estimation_method,
+                                criteria=_criteria)
+
+        if visualize:
+            self.draw_registration_result(source=_source, target=_target, pose=result.transformation, **kwargs)
+
+        return result
 
 
 class FastGlobalRegistration(RegistrationInterface):
