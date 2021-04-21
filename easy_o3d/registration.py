@@ -106,8 +106,8 @@ class IterativeClosestPoint(RegistrationInterface):
                                 as well as the the transformation between `source` and `target`.
         """
 
-        _source = self._eval_data(data=source, **kwargs)
-        _target = self._eval_data(data=target, **kwargs)
+        _source = self._eval_data(data_key_or_value=source, **kwargs)
+        _target = self._eval_data(data_key_or_value=target, **kwargs)
 
         if any(key in kwargs for key in ["relative_fitness", "relative_rmse", "max_iteration"]):
             _criteria = o3d.pipelines.registration.ICPConvergenceCriteria(
@@ -120,10 +120,9 @@ class IterativeClosestPoint(RegistrationInterface):
 
         max_dist = kwargs.get("max_correspondence_distance",
                               self.max_correspondence_distance)
-        # Heuristic: One 1th of object size
+        # Heuristic: Object size
         if max_dist == -1.0:
-            max_dist = (np.asarray(_source.get_max_bound()) -
-                        np.asarray(_source.get_min_bound())).max()
+            max_dist = (np.asarray(_source.get_max_bound()) - np.asarray(_source.get_min_bound())).max()
             logger.debug(
                 f"Using {max_dist} as maximum correspondence distance.")
 
@@ -173,7 +172,10 @@ class IterativeClosestPoint(RegistrationInterface):
 class FastGlobalRegistration(RegistrationInterface):
     """The _Fast Global Registration_ algoritm."""
 
-    def __init__(self):
-        super().__init()
+    def __init__(self,
+                 data_to_cache: dict = None,
+                 **kwargs: Any):
+        super().__init__(data_to_cache=data_to_cache, **kwargs)
 
-    def run
+    def run(self, **kwargs):
+        pass
