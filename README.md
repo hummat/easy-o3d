@@ -1,2 +1,2 @@
-# rmc-open3d
-Uses Open3D functionality to implement various 3D data based algorithm used at RMC
+# Easy Open3D
+An easy to use wrapper and utility functions and scripts for some of Open3D's registration functionality.
