@@ -31,7 +31,7 @@ import json
 import logging
 import os
 from enum import Flag, auto
-from typing import Any, List, Union
+from typing import Any, List, Union, Tuple
 
 import numpy as np
 import open3d as o3d
@@ -42,6 +42,7 @@ Image = o3d.geometry.Image
 RGBDImage = o3d.geometry.RGBDImage
 PointCloud = o3d.geometry.PointCloud
 TriangleMesh = o3d.geometry.TriangleMesh
+Feature = o3d.pipelines.registration.Feature
 
 
 class ValueTypes(Flag):
@@ -128,14 +129,14 @@ def process_point_cloud(point_cloud: PointCloud,
                         normalize_normals: bool = False,
                         orient_normals: OrientationTypes = OrientationTypes.NONE,
                         recalculate_normals: bool = False,
+                        compute_feature: bool = False,
                         search_param: SearchParamTypes = SearchParamTypes.HYBRID,
                         search_param_knn: int = 30,
-                        search_param_radius: float = 100.0,
+                        search_param_radius: float = 0.02,  # 2cm
                         camera_location_or_direction: np.ndarray = np.zeros(3),
-                        draw: bool = False) -> PointCloud:
+                        draw: bool = False) -> Union[PointCloud, Tuple[PointCloud, Feature]]:
 
     _point_cloud = copy.deepcopy(point_cloud)
-    assert isinstance(downsample, DownsampleTypes)
     if downsample != DownsampleTypes.NONE:
         logger.debug(f"{downsample} downsampling point cloud  with factor {downsample_factor}.")
         logger.debug(f"Number of points before downsampling: {len(np.asarray(_point_cloud.points))}")
@@ -143,9 +144,11 @@ def process_point_cloud(point_cloud: PointCloud,
             _point_cloud = _point_cloud.voxel_down_sample(voxel_size=downsample_factor)
         elif downsample == DownsampleTypes.RANDOM:
             raise NotImplementedError
-            _point_cloud = _point_cloud.random_down_sample(sampling_ratio=downsample_factor)
+            # _point_cloud = _point_cloud.random_down_sample(sampling_ratio=downsample_factor)
         elif downsample == DownsampleTypes.UNIFORM:
             _point_cloud = _point_cloud.uniform_down_sample(every_k_points=int(downsample_factor))
+        else:
+            raise TypeError(f"`downsample` needs to by of type {DownsampleTypes} but is {type(downsample)}.")
         logger.debug(f"Number of points after downsampling: {len(np.asarray(_point_cloud.points))}")
 
     if transform is not None:
@@ -157,22 +160,24 @@ def process_point_cloud(point_cloud: PointCloud,
         elif _transform.size == 16:
             _point_cloud.transform(_transform.reshape(4, 4))
         else:
-            raise ValueError(
-                f"`transform` needs to be a valid translation, rotation or transformation in natural or homegeneous coordiantes, i.e. size 3, 4, 9 or 16."
-            )
+            raise ValueError("`transform` needs to be a valid translation, rotation or transformation in natural or" \
+                             "homogeneous coordinates, i.e. of size 3, 4, 9 or 16.")
 
     if scale != 1.0:
         _point_cloud.scale(scale=scale, center=_point_cloud.get_center())
 
-    if estimate_normals and (not _point_cloud.has_normals() or recalculate_normals):
-        logger.debug(f"Estimating point cloud normals using method {search_param}.")
-        assert isinstance(search_param, SearchParamTypes)
+    if estimate_normals or compute_feature:
         if search_param == SearchParamTypes.KNN:
             _search_param = o3d.geometry.KDTreeSearchParamKNN(knn=search_param_knn)
         elif search_param == SearchParamTypes.RADIUS:
             _search_param = o3d.geometry.KDTreeSearchParamRadius(radius=search_param_radius)
         elif search_param == SearchParamTypes.HYBRID:
             _search_param = o3d.geometry.KDTreeSearchParamHybrid(radius=search_param_radius, max_nn=search_param_knn)
+        else:
+            raise TypeError(f"`search_param` needs to be of type {SearchParamTypes} but is {type(search_param)}.")
+
+    if estimate_normals and (not _point_cloud.has_normals() or recalculate_normals):
+        logger.debug(f"Estimating point cloud normals using method {search_param}.")
         if recalculate_normals:
             _point_cloud.normals = o3d.utility.Vector3dVector()
         _point_cloud.estimate_normals(search_param=_search_param, fast_normal_computation=fast_normal_computation)
@@ -185,7 +190,7 @@ def process_point_cloud(point_cloud: PointCloud,
 
     assert isinstance(orient_normals, OrientationTypes)
     if orient_normals != OrientationTypes.NONE:
-        assert _point_cloud.has_normals(), "Point cloud doens't have normals so can't orient them."
+        assert _point_cloud.has_normals(), "Point cloud doesn't have normals so can't orient them."
         logger.debug(f"Orienting normals towards {orient_normals}.")
     if orient_normals == OrientationTypes.TANGENT_PLANE:
         _point_cloud.orient_normals_consistent_tangent_plane(k=search_param_knn)
@@ -194,12 +199,18 @@ def process_point_cloud(point_cloud: PointCloud,
     elif orient_normals == OrientationTypes.DIRECTION:
         _point_cloud.orient_normals_to_align_with_direction(orientation_reference=camera_location_or_direction)
 
+    if compute_feature:
+        feature = o3d.pipelines.registration.compute_fpfh_feature(input=_point_cloud, search_param=_search_param)
+
     if draw:
         if not _point_cloud.has_colors():
             _point_cloud.paint_uniform_color([0.8, 0.0, 0.0])
-        o3d.visualization.draw_geometries([_point_cloud])
+        o3d.visualization.draw_geometries([_point_cloud], window_name="Processed Point Cloud", width=800, height=600)
 
-    return _point_cloud
+    if compute_feature:
+        return _point_cloud, feature
+    else:
+        return _point_cloud
 
 
 def read_point_cloud(filename: str, **kwargs: Any) -> PointCloud:
@@ -240,7 +251,7 @@ def get_triangle_mesh_from_triangles_and_vertices(triangles: np.ndarray, vertice
     """
     triangle_mesh = TriangleMesh()
     triangle_mesh.triangles = o3d.utility.Vector3iVector(triangles)
-    triangle_mesh.vertices = o3d.utility.Vector3Vector(vertices)
+    triangle_mesh.vertices = o3d.utility.Vector3dVector(vertices)
     return triangle_mesh
 
 
@@ -488,3 +499,7 @@ def get_camera_parameters_from_blenderproc_bopwriter(scene_id: Union[int, str], 
         o3d.io.write_pinhole_camera_parameters(os.path.join(output_path, "camera_parameters.json"), camera_parameters)
 
     return camera_parameters
+
+
+def draw_geometries(geometries: list, window_name="Visualizer", size=(800, 600)):
+    o3d.visualization.draw_geometries(geometries, window_name=window_name, width=size[0], height=size[1])
