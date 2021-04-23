@@ -4,14 +4,14 @@ Classes:
     registration.IterativeClosestPoint: ICP functionality.
     registration.FastGlobalRegistration: FGR functionality.
     registration.RANSAC: RANSAC functionality.
-    registration.EstimationMethodTypes: Estimation method style flags.
+    registration.ICPTypes: Estimation method style flags.
     registration.CheckerTypes: RANSAC correspondence checker style flags.
 """
 
 import copy
 import logging
-from enum import Flag, auto
-from typing import Any, Union, Tuple
+import time
+from typing import Any, Union, Tuple, List
 
 import numpy as np
 import open3d as o3d
@@ -24,45 +24,42 @@ PointToPlane = o3d.pipelines.registration.TransformationEstimationPointToPlane
 ColoredICP = o3d.pipelines.registration.TransformationEstimationForColoredICP
 TransformationEstimation = o3d.pipelines.registration.TransformationEstimation
 ICPConvergenceCriteria = o3d.pipelines.registration.ICPConvergenceCriteria
+RobustKernel = o3d.pipelines.registration.RobustKernel
 FastGlobalRegistrationOption = o3d.pipelines.registration.FastGlobalRegistrationOption
 Feature = o3d.pipelines.registration.Feature
 RANSACConvergenceCriteria = o3d.pipelines.registration.RANSACConvergenceCriteria
 CorrespondenceCheckerBasedOnEdgeLength = o3d.pipelines.registration.CorrespondenceCheckerBasedOnEdgeLength
 CorrespondenceCheckerBasedOnDistance = o3d.pipelines.registration.CorrespondenceCheckerBasedOnDistance
 CorrespondenceCheckerBasedOnNormal = o3d.pipelines.registration.CorrespondenceCheckerBasedOnNormal
+CorrespondenceChecker = o3d.pipelines.registration.CorrespondenceChecker
 ransac_feature = o3d.pipelines.registration.registration_ransac_based_on_feature_matching
 ransac_correspondence = o3d.pipelines.registration.registration_ransac_based_on_correspondence
 RegistrationResult = o3d.pipelines.registration.RegistrationResult
 
 
-class EstimationMethodTypes(Flag):
-    POINT_TO_POINT = auto()
-    POINT_TO_PLANE = auto()
-    COLORED = auto()
+class ICPTypes:
+    POINT = PointToPoint
+    PLANE = PointToPlane
+    COLOR = ColoredICP
 
 
-class CheckerTypes(Flag):
-    EDGE_LENGTH = auto()
-    DISTANCE = auto()
-    NORMAL = auto()
+class CheckerTypes:
+    EDGE = CorrespondenceCheckerBasedOnEdgeLength
+    DISTANCE = CorrespondenceCheckerBasedOnDistance
+    NORMAL = CorrespondenceCheckerBasedOnNormal
+
+
+class KernelTypes:
+    NONE = None
+    TUKEY = o3d.pipelines.registration.TukeyLoss
+    CAUCHY = o3d.pipelines.registration.CauchyLoss
+    L1 = o3d.pipelines.registration.L1Loss
+    L2 = o3d.pipelines.registration.L2Loss
+    HUBER = o3d.pipelines.registration.HuberLoss
+    GM = o3d.pipelines.registration.GMLoss
 
 
 logger = logging.getLogger(__name__)
-
-
-def eval_estimation_method(estimation_method: Union[EstimationMethodTypes, TransformationEstimation]) -> Union[
-    PointToPoint, PointToPlane, ColoredICP]:
-    assert isinstance(estimation_method, (EstimationMethodTypes, TransformationEstimation))
-    if isinstance(estimation_method, TransformationEstimation):
-        return estimation_method
-    if estimation_method == EstimationMethodTypes.POINT_TO_POINT:
-        return PointToPoint(with_scaling=False)
-    elif estimation_method == EstimationMethodTypes.POINT_TO_PLANE:
-        return PointToPlane(kernel=o3d.pipelines.registration.TukeyLoss(k=0.01))
-    elif estimation_method == EstimationMethodTypes.COLORED:
-        return ColoredICP()
-    else:
-        raise ValueError(f"{estimation_method} is not a valid estimation method type.")
 
 
 class IterativeClosestPoint(RegistrationInterface):
@@ -73,7 +70,10 @@ class IterativeClosestPoint(RegistrationInterface):
                  relative_rmse: float = 1e-6,
                  max_iteration: int = 30,
                  max_correspondence_distance: float = 0.004,  # 4mm
-                 estimation_method: EstimationMethodTypes = EstimationMethodTypes.POINT_TO_POINT,
+                 estimation_method: ICPTypes = ICPTypes.POINT,
+                 with_scaling: bool = False,
+                 kernel: KernelTypes = KernelTypes.NONE,
+                 kernel_noise_std: float = 0.1,
                  data_to_cache: dict = None,
                  **kwargs: Any) -> None:
         """
@@ -84,11 +84,11 @@ class IterativeClosestPoint(RegistrationInterface):
                            the iteration stops.
             max_iteration: Maximum iteration before iteration stops.
             max_correspondence_distance: Maximum correspondence points-pair distance.
-            estimation_method: The estimation method. One of `POINT_TO_POINT`, `POINT_TO_PLANE` or `COLORED`.
+            estimation_method: The estimation method. One of `POINT`, `PLANE` or `COLOR`.
             data_to_cache: The data to be cached.
             kwargs: Optional additional keyword arguments used downstream.
         """
-        super().__init__(data_to_cache=data_to_cache, **kwargs)
+        super().__init__(name="ICP", data_to_cache=data_to_cache, **kwargs)
 
         self.relative_fitness = relative_fitness
         self.relative_rmse = relative_rmse
@@ -96,9 +96,12 @@ class IterativeClosestPoint(RegistrationInterface):
         self.max_correspondence_distance = max_correspondence_distance
 
         self.algorithm = o3d.pipelines.registration.registration_icp
-        self.estimation_method = eval_estimation_method(estimation_method=estimation_method)
-        if isinstance(self.estimation_method, ColoredICP):
+        self.estimation_method = estimation_method
+        if self.estimation_method == ICPTypes.COLOR:
             self.algorithm = o3d.pipelines.registration.registration_colored_icp
+        self.with_scaling = with_scaling
+        self.kernel = kernel
+        self.kernel_noise_std = kernel_noise_std
 
         self.criteria = ICPConvergenceCriteria(relative_fitness=self.relative_fitness,
                                                relative_rmse=self.relative_rmse,
@@ -133,6 +136,7 @@ class IterativeClosestPoint(RegistrationInterface):
             RegistrationResult: The registration result containing relative fitness and RMSE
                                 as well as the the transformation between `source` and `target`.
         """
+        start = time.time()
         _source = self._eval_data(data_key_or_value=source, **kwargs)
         _target = self._eval_data(data_key_or_value=target, **kwargs)
 
@@ -146,10 +150,19 @@ class IterativeClosestPoint(RegistrationInterface):
         if self.max_correspondence_distance == -1.0:
             self.max_correspondence_distance = self._compute_dist(point_cloud=_source)
 
-        if "estimation_method" in kwargs:
-            self.estimation_method = eval_estimation_method(kwargs.get("estimation_method", self.estimation_method))
-        if isinstance(self.estimation_method, ColoredICP):
+        estimation_method_kwargs = {}
+        self.estimation_method = kwargs.get("estimation_method", self.estimation_method)
+        if self.estimation_method == ICPTypes.COLOR:
             self.algorithm = o3d.pipelines.registration.registration_colored_icp
+        elif self.estimation_method == ICPTypes.POINT:
+            estimation_method_kwargs = {"with_scaling": kwargs.get("with_scaling", self.with_scaling)}
+        elif self.estimation_method == ICPTypes.PLANE:
+            kernel = kwargs.get("kernel", self.kernel)
+            if kernel != KernelTypes.NONE:
+                kernel = kernel(k=kwargs.get("kernel_noise_std", self.kernel_noise_std))
+                estimation_method_kwargs = {"kernel": kernel}
+        else:
+            raise ValueError(f"Estimation method must of type {type(ICPTypes())} but is {self.estimation_method}.")
 
         if crop_target_around_source:
             bounding_box = copy.deepcopy(_source).transform(init).get_axis_aligned_bounding_box()
@@ -157,7 +170,7 @@ class IterativeClosestPoint(RegistrationInterface):
             cropped_target = copy.deepcopy(_target).crop(bounding_box=bounding_box)
             _target = cropped_target if not cropped_target.is_empty() else _target
 
-        if isinstance(self.estimation_method, (PointToPlane, ColoredICP)):
+        if self.estimation_method in [ICPTypes.PLANE, ICPTypes.COLOR]:
             if not _source.has_normals():
                 logger.warning(f"Source has no normals which are needed for {self.estimation_method}.")
                 logger.warning("Computing with (potentially suboptimal) default parameters: kNN=30, radius=0.02.")
@@ -181,8 +194,10 @@ class IterativeClosestPoint(RegistrationInterface):
                                 target=_target,
                                 max_correspondence_distance=self.max_correspondence_distance,
                                 init=init,
-                                estimation_method=self.estimation_method,
+                                estimation_method=self.estimation_method(**estimation_method_kwargs),
                                 criteria=self.criteria)
+        logger.debug(f"{self._name} took {time.time() - start} seconds.")
+        logger.debug(f"{self._name} result: fitness={result.fitness}, inlier_rmse={result.inlier_rmse}.")
 
         if draw:
             self.draw_registration_result(source=_source, target=_target, pose=result.transformation, **kwargs)
@@ -198,7 +213,7 @@ class FastGlobalRegistration(RegistrationInterface):
                  max_correspondence_distance: float = 0.005,  # 5mm
                  data_to_cache: dict = None,
                  **kwargs: Any) -> None:
-        super().__init__(data_to_cache=data_to_cache, **kwargs)
+        super().__init__(name="FGR", data_to_cache=data_to_cache, **kwargs)
 
         self.max_correspondence_distance = max_correspondence_distance
         self.max_iteration = max_iteration
@@ -215,6 +230,7 @@ class FastGlobalRegistration(RegistrationInterface):
             draw: bool = False,
             **kwargs: Any) -> RegistrationResult:
 
+        start = time.time()
         _source = self._eval_data(data_key_or_value=source, **kwargs)
         _target = self._eval_data(data_key_or_value=target, **kwargs)
 
@@ -273,6 +289,9 @@ class FastGlobalRegistration(RegistrationInterface):
                                 source_feature=_source_feature,
                                 target_feature=_target_feature,
                                 option=self.option)
+        logger.debug(f"{self._name} took {time.time() - start} seconds.")
+        logger.debug(f"{self._name} result: fitness={result.fitness}, inlier_rmse={result.inlier_rmse}.")
+
         if draw:
             self.draw_registration_result(source=_source, target=_target, pose=result.transformation, **kwargs)
 
@@ -287,40 +306,46 @@ class RANSAC(RegistrationInterface):
                  max_iteration=100000,
                  confidence=0.999,
                  max_correspondence_distance: float = 0.015,  # 1.5cm
-                 estimation_method: EstimationMethodTypes = EstimationMethodTypes.POINT_TO_POINT,
-                 checkers: CheckerTypes = (CheckerTypes.EDGE_LENGTH, CheckerTypes.DISTANCE),
+                 estimation_method: ICPTypes = ICPTypes.POINT,
+                 ransac_n: int = 3,
+                 checkers: Tuple[CheckerTypes] = (CheckerTypes.EDGE, CheckerTypes.DISTANCE),
                  similarity_threshold: float = 0.9,
                  normal_angle_threshold: float = 0.52,  # ~30° in radians
                  data_to_cache: dict = None,
                  **kwargs: Any) -> None:
-        super().__init__(data_to_cache=data_to_cache, **kwargs)
+        super().__init__(name="RANSAC", data_to_cache=data_to_cache, **kwargs)
 
         self.max_iteration = max_iteration
         self.confidence = confidence
         self.max_correspondence_distance = max_correspondence_distance
         self.similarity_threshold = similarity_threshold
         self.normal_angle_threshold = normal_angle_threshold
+        self.ransac_n = ransac_n
 
         self.algorithm = algorithm
-        assert estimation_method != EstimationMethodTypes.COLORED, \
-            f"Estimation method {estimation_method} is not supported by RANSAC."
-        self.estimation_method = eval_estimation_method(estimation_method)
+        self.estimation_method = estimation_method
+        if self.estimation_method == ICPTypes.COLOR:
+            raise ValueError(f"Estimation method {self.estimation_method} is not supported by RANSAC.")
 
-        self.checkers = None
-        self._set_checkers(checkers)
+        self.checkers = self._eval_checkers(checkers=checkers)
         self.criteria = RANSACConvergenceCriteria(max_iteration=self.max_iteration, confidence=self.confidence)
 
-    def _set_checkers(self, checkers: Tuple[CheckerTypes]) -> None:
-        self.checkers = list()
-        if CheckerTypes.EDGE_LENGTH in checkers:
-            self.checkers.append(
-                CorrespondenceCheckerBasedOnEdgeLength(similarity_threshold=self.similarity_threshold))
-        if CheckerTypes.DISTANCE in checkers:
-            self.checkers.append(
-                CorrespondenceCheckerBasedOnDistance(distance_threshold=self.max_correspondence_distance))
-        if CheckerTypes.NORMAL in checkers:
-            self.checkers.append(
-                CorrespondenceCheckerBasedOnNormal(normal_angle_threshold=self.normal_angle_threshold))
+    def _eval_checkers(self, **kwargs: Any) -> Union[List[CorrespondenceChecker], List]:
+        checkers = kwargs.get("checkers")
+        if isinstance(checkers, (list, tuple)):
+            checker_list = list()
+            for checker in checkers:
+                if checker == CheckerTypes.EDGE:
+                    checker_list.append(
+                        checker(similarity_threshold=kwargs.get("similarity_threshold", self.similarity_threshold)))
+                elif checker == CheckerTypes.DISTANCE:
+                    checker_list.append(checker(
+                        distance_threshold=kwargs.get("max_correspondence_distance", self.max_correspondence_distance)))
+                elif checker == CheckerTypes.NORMAL:
+                    checker_list.append(checker(
+                        normal_angle_threshold=kwargs.get("normal_angle_threshold", self.normal_angle_threshold)))
+            return checker_list
+        return self.checkers if self.checkers else list()
 
     def run(self,
             source: InputTypes,
@@ -330,6 +355,7 @@ class RANSAC(RegistrationInterface):
             draw: bool = False,
             **kwargs: Any) -> RegistrationResult:
 
+        start = time.time()
         _source = self._eval_data(data_key_or_value=source, **kwargs)
         _target = self._eval_data(data_key_or_value=target, **kwargs)
 
@@ -342,17 +368,21 @@ class RANSAC(RegistrationInterface):
         if self.max_correspondence_distance == -1.0:
             self.max_correspondence_distance = self._compute_dist(point_cloud=_source)
 
-        if "estimation_method" in kwargs:
-            estimation_method = kwargs.get("estimation_method", self.estimation_method)
-            assert estimation_method != EstimationMethodTypes.COLORED, \
-                f"Estimation method {estimation_method} is not supported by RANSAC."
-            self.estimation_method = eval_estimation_method(estimation_method)
+        estimation_method_kwargs = {}
+        self.estimation_method = kwargs.get("estimation_method", self.estimation_method)
+        if self.estimation_method == ICPTypes.COLOR:
+            raise ValueError(f"Estimation method {self.estimation_method} is not supported by RANSAC.")
+        elif self.estimation_method == ICPTypes.POINT:
+            estimation_method_kwargs = {"with_scaling": kwargs.get("with_scaling", False)}
+        elif self.estimation_method == ICPTypes.PLANE:
+            kernel = kwargs.get("kernel", KernelTypes.NONE)
+            if kernel != KernelTypes.NONE:
+                kernel = kernel(k=kwargs.get("kernel_noise_std", 0.1))
+                estimation_method_kwargs = {"kernel": kernel}
+        else:
+            raise ValueError(f"Estimation method must of type {type(ICPTypes())} but is {self.estimation_method}.")
 
-        if "checkers" in kwargs:
-            self._set_checkers(kwargs.get("checkers", self.checkers))
-
-        if isinstance(self.estimation_method,
-                      (PointToPlane, ColoredICP)) or source_feature is None or target_feature is None:
+        if self.estimation_method == ICPTypes.PLANE or any(x is None for x in [source_feature, target_feature]):
             if not _source.has_normals():
                 logger.warning(f"Source has no normals which are needed for {self.estimation_method} and FPFH feature.")
                 logger.warning("Computing with (potentially suboptimal) default parameters: kNN=30, radius=0.02.")
@@ -396,12 +426,14 @@ class RANSAC(RegistrationInterface):
                                 target=_target,
                                 source_feature=_source_feature,
                                 target_feature=_target_feature,
-                                mutual_filter=True,
+                                mutual_filter=kwargs.get("mutual_filter", True),
                                 max_correspondence_distance=self.max_correspondence_distance,
-                                estimation_method=self.estimation_method,
-                                ransac_n=3,
-                                checkers=self.checkers,
+                                estimation_method=self.estimation_method(**estimation_method_kwargs),
+                                ransac_n=kwargs.get("ransac_n", self.ransac_n),
+                                checkers=self._eval_checkers(**kwargs),
                                 criteria=self.criteria)
+        logger.debug(f"{self._name} took {time.time() - start} seconds.")
+        logger.debug(f"{self._name} result: fitness={result.fitness}, inlier_rmse={result.inlier_rmse}.")
 
         if draw:
             self.draw_registration_result(source=_source, target=_target, pose=result.transformation, **kwargs)

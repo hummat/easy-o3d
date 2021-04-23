@@ -30,6 +30,7 @@ import copy
 import json
 import logging
 import os
+import time
 from enum import Flag, auto
 from typing import Any, List, Union, Tuple
 
@@ -59,6 +60,12 @@ class DownsampleTypes(Flag):
     VOXEL = auto()
     RANDOM = auto()
     UNIFORM = auto()
+
+
+class OutlierTypes(Flag):
+    NONE = auto()
+    STATISTICAL = auto()
+    RADIUS = auto()
 
 
 class SearchParamTypes(Flag):
@@ -95,22 +102,30 @@ def eval_data(data: InputTypes, **kwargs: Any) -> PointCloud:
         PointCloud: The transformed point cloud data.
     """
     if isinstance(data, PointCloud):
+        logger.debug("Data is point cloud. Returning.")
         return data
     elif isinstance(data, Image) and "camera_intrinsic" in kwargs:
-        return convert_depth_image_to_point_cloud(depth_image=data, **kwargs)
+        logger.debug("Trying to convert depth image to point cloud.")
+        return convert_depth_image_to_point_cloud(image_or_path=data, **kwargs)
     elif isinstance(data, (RGBDImage, list)) and "camera_intrinsic" in kwargs:
-        return convert_rgbd_image_to_point_cloud(rgbd_image=data, **kwargs)
+        logger.debug("Trying to convert RGB-D image to point cloud.")
+        return convert_rgbd_image_to_point_cloud(rgbd_image_or_path=data, **kwargs)
     elif isinstance(data, (str, TriangleMesh)) and "number_of_points" in kwargs:
+        logger.debug("Trying to sample point cloud from mesh.")
         return sample_point_cloud_from_triangle_mesh(mesh_or_filename=data, **kwargs)
     elif isinstance(data, str):
+        logger.debug(f"Trying to read point cloud data from file.")
         return read_point_cloud(filename=data, **kwargs)
     elif isinstance(data, np.ndarray):
         if "camera_intrinsic" in kwargs:
             if len(data.shape) == 2:
-                return convert_depth_image_to_point_cloud(depth_image=data, **kwargs)
-            elif len(data.shape) == 4:
-                return convert_rgbd_image_to_point_cloud(rgbd_image=data, **kwargs)
-        elif len(data.shape) in [3, 6, 9]:
+                logger.debug(f"Trying to convert depth data to point cloud ")
+                return convert_depth_image_to_point_cloud(image_or_path=data, **kwargs)
+            elif data.shape[2] == 4:
+                logger.debug(f"Trying to convert RGB-D data to point cloud.")
+                return convert_rgbd_image_to_point_cloud(image_or_path=data, **kwargs)
+        elif data.shape[1] in [3, 6, 9]:
+            logger.debug("Trying to convert data to point cloud.")
             return get_point_cloud_from_points(points=data)
         else:
             raise ValueError(
@@ -122,6 +137,8 @@ def eval_data(data: InputTypes, **kwargs: Any) -> PointCloud:
 def process_point_cloud(point_cloud: PointCloud,
                         downsample: DownsampleTypes = DownsampleTypes.NONE,
                         downsample_factor: Union[float, int] = 1.0,
+                        remove_outlier: OutlierTypes = OutlierTypes.NONE,
+                        outlier_std_ratio: float = 1.0,
                         transform: np.ndarray = None,
                         scale: float = 1.0,
                         estimate_normals: bool = False,
@@ -136,9 +153,10 @@ def process_point_cloud(point_cloud: PointCloud,
                         camera_location_or_direction: np.ndarray = np.zeros(3),
                         draw: bool = False) -> Union[PointCloud, Tuple[PointCloud, Feature]]:
 
+    start = time.time()
     _point_cloud = copy.deepcopy(point_cloud)
     if downsample != DownsampleTypes.NONE:
-        logger.debug(f"{downsample} downsampling point cloud  with factor {downsample_factor}.")
+        logger.debug(f"{downsample} downsampling point cloud with factor {downsample_factor}.")
         logger.debug(f"Number of points before downsampling: {len(np.asarray(_point_cloud.points))}")
         if downsample == DownsampleTypes.VOXEL:
             _point_cloud = _point_cloud.voxel_down_sample(voxel_size=downsample_factor)
@@ -148,8 +166,19 @@ def process_point_cloud(point_cloud: PointCloud,
         elif downsample == DownsampleTypes.UNIFORM:
             _point_cloud = _point_cloud.uniform_down_sample(every_k_points=int(downsample_factor))
         else:
-            raise TypeError(f"`downsample` needs to by of type {DownsampleTypes} but is {type(downsample)}.")
+            raise ValueError(f"`downsample` needs to by one of `DownsampleTypes` but is {type(downsample)}.")
         logger.debug(f"Number of points after downsampling: {len(np.asarray(_point_cloud.points))}")
+
+    if remove_outlier != OutlierTypes.NONE:
+        num_points = len(np.asarray(_point_cloud.points))
+        if remove_outlier == OutlierTypes.STATISTICAL:
+            _point_cloud, _ = _point_cloud.remove_statistical_outlier(nb_neighbors=search_param_knn,
+                                                                      std_ratio=outlier_std_ratio)
+        elif remove_outlier == OutlierTypes.RADIUS:
+            _point_cloud, _ = _point_cloud.remove_radius_outlier(nb_points=search_param_knn, radius=search_param_radius)
+        else:
+            raise ValueError(f"`remove_outlier` needs to be one of `OutlierTypes` but is {type(remove_outlier)}.")
+        logger.debug(f"Removed {num_points - len(np.asarray(_point_cloud.points))} outliers.")
 
     if transform is not None:
         _transform = np.asarray(transform)
@@ -164,7 +193,10 @@ def process_point_cloud(point_cloud: PointCloud,
                              "homogeneous coordinates, i.e. of size 3, 4, 9 or 16.")
 
     if scale != 1.0:
-        _point_cloud.scale(scale=scale, center=_point_cloud.get_center())
+        logger.debug(f"Scaling point cloud with factor {scale}.")
+        logger.debug("Using custom scaling code as PointCloud.scale doesn't seem to work.")
+        _point_cloud.points = o3d.utility.Vector3dVector(np.asarray(_point_cloud.points) * scale)
+        # _point_cloud = _point_cloud.scale(scale=scale, center=_point_cloud.get_center())
 
     if estimate_normals or compute_feature:
         if search_param == SearchParamTypes.KNN:
@@ -174,7 +206,7 @@ def process_point_cloud(point_cloud: PointCloud,
         elif search_param == SearchParamTypes.HYBRID:
             _search_param = o3d.geometry.KDTreeSearchParamHybrid(radius=search_param_radius, max_nn=search_param_knn)
         else:
-            raise TypeError(f"`search_param` needs to be of type {SearchParamTypes} but is {type(search_param)}.")
+            raise ValueError(f"`search_param` needs to be one of `SearchParamTypes` but is {type(search_param)}.")
 
     if estimate_normals and (not _point_cloud.has_normals() or recalculate_normals):
         logger.debug(f"Estimating point cloud normals using method {search_param}.")
@@ -188,19 +220,24 @@ def process_point_cloud(point_cloud: PointCloud,
         else:
             logger.warning("Point cloud doesnt' have normals so can't normalize them.")
 
-    assert isinstance(orient_normals, OrientationTypes)
     if orient_normals != OrientationTypes.NONE:
         assert _point_cloud.has_normals(), "Point cloud doesn't have normals so can't orient them."
         logger.debug(f"Orienting normals towards {orient_normals}.")
-    if orient_normals == OrientationTypes.TANGENT_PLANE:
-        _point_cloud.orient_normals_consistent_tangent_plane(k=search_param_knn)
-    elif orient_normals == OrientationTypes.CAMERA:
-        _point_cloud.orient_normals_towards_camera_location(camera_location=camera_location_or_direction)
-    elif orient_normals == OrientationTypes.DIRECTION:
-        _point_cloud.orient_normals_to_align_with_direction(orientation_reference=camera_location_or_direction)
+        if orient_normals == OrientationTypes.TANGENT_PLANE:
+            _point_cloud.orient_normals_consistent_tangent_plane(k=search_param_knn)
+        elif orient_normals == OrientationTypes.CAMERA:
+            _point_cloud.orient_normals_towards_camera_location(camera_location=camera_location_or_direction)
+        elif orient_normals == OrientationTypes.DIRECTION:
+            _point_cloud.orient_normals_to_align_with_direction(orientation_reference=camera_location_or_direction)
+        else:
+            raise ValueError(f"`orient_normals` needs to be one of `OrientationTypes` but is {type(orient_normals)}.")
 
     if compute_feature:
+        assert _point_cloud.has_normals(), "Point cloud doesn't have normals which are needed to compute FPFH feature."
+        logger.debug(f"Computing FPFH features using method {search_param}.")
         feature = o3d.pipelines.registration.compute_fpfh_feature(input=_point_cloud, search_param=_search_param)
+
+    logger.debug(f"Processing took {time.time() - start} seconds.")
 
     if draw:
         if not _point_cloud.has_colors():
@@ -227,7 +264,7 @@ def read_point_cloud(filename: str, **kwargs: Any) -> PointCloud:
 
 
 def read_triangle_mesh(filename: str, **kwargs: Any) -> TriangleMesh:
-    """Reads triangle meshe data from file.
+    """Reads triangle mesh data from file.
 
     Args:
         filename (str): The path to the triangle mesh file. 
@@ -303,7 +340,7 @@ def sample_point_cloud_from_triangle_mesh(mesh_or_filename: Union[TriangleMesh, 
 
 def get_camera_intrinsic_from_array(image_or_path: ImageTypes, camera_intrinsic: Union[np.ndarray,
                                                                                        list]) -> PinholeCameraIntrinsic:
-    assert camera_intrinsic.size == 9, "Camera intrinsic must be 9 values but are {camera_intrinsic.size}."
+    assert camera_intrinsic.size == 9, f"Camera intrinsic must be 9 values but is {camera_intrinsic.size}."
     intrinsic = camera_intrinsic
     if isinstance(intrinsic, list):
         intrinsic = np.asarray(camera_intrinsic)
@@ -358,13 +395,18 @@ def eval_image_type(image_or_path: RGBDImageTypes, **kwargs: Any) -> Union[Image
             color_or_depth = np.asarray(o3d.io.read_image(image_or_path))
         elif isinstance(image_or_path, np.ndarray):
             color_or_depth = image_or_path
-
-        if len(color_or_depth.shape) in [2, 3]:
-            return Image(image_or_path)
-        elif len(color_or_depth.shape) == 4:
-            return get_rgbd_image(color=image_or_path, **kwargs)
         else:
             raise TypeError(f"Image type {type(image_or_path)} not supported.")
+
+        if len(color_or_depth.shape) == 2:
+            return Image(image_or_path)
+        elif len(color_or_depth.shape) == 3:
+            if color_or_depth.shape[2] == 3:
+                return Image(image_or_path)
+            if color_or_depth.shape[2] == 4:
+                return get_rgbd_image(color=image_or_path, **kwargs)
+        else:
+            raise ValueError(f"Input shape must be WxH, WxHx3 or WxHx4 but is {color_or_depth.shape}.")
 
 
 def eval_camera_intrinsic_type(image_or_path: ImageTypes, camera_intrinsic: CameraTypes):
@@ -385,7 +427,7 @@ def convert_depth_image_to_point_cloud(image_or_path: ImageTypes,
     """Convenience function to obtain point clouds from depth images.
 
     Args:
-        image (Union[Image, np.ndarray]): The depth image.
+        image_or_path: The depth image.
         camera_intrinsic (Union[PinholeCameraIntrinsic,
                                  PinholeCameraIntrinsicParameters,
                                  np.ndarray]): The 3x3 camera intrinsic matrix.

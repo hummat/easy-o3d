@@ -38,12 +38,13 @@ class RegistrationInterface(ABC):
                                                              of `source` being aligned with `target`
                                                              using `pose`.
     """
-    def __init__(self, data_to_cache: dict = None, **kwargs: Any) -> None:
+    def __init__(self, name, data_to_cache: dict = None, **kwargs: Any) -> None:
         """
         Args:
             data_to_cache: The data to be cached.
             kwargs: Optional additional keyword arguments used downstream.
         """
+        self._name = name
         self.cached_data = dict()
         if data_to_cache is not None:
             self.add_to_cache(data=data_to_cache, **kwargs)
@@ -66,7 +67,7 @@ class RegistrationInterface(ABC):
             hash = hashlib.md5(data_key_or_value)
             if hash in self.cached_data:
                 return self.cached_data[hash]
-        logger.debug(f"Couldn't find data {data_key_or_value} in cashe. Re-evaluating.")
+        logger.debug(f"Couldn't find data {data_key_or_value} in cache. Re-evaluating.")
         return eval_data(data=data_key_or_value, **kwargs)
 
     @staticmethod
@@ -112,7 +113,7 @@ class RegistrationInterface(ABC):
                     logger.debug(f"Replacing data with key {key} in cache.")
                     self.cached_data[key] = eval_data(value, **kwargs)
             except TypeError:
-                logger.warning(f"Couldn't raplace data with unhashable key {key}.")
+                logger.warning(f"Couldn't replace data with unhashable key {key}.")
 
     def get_from_cache(self, data_key: InputTypes) -> PointCloud:
         """Returns value for `data_key` from cache.
@@ -164,7 +165,7 @@ class RegistrationInterface(ABC):
             to_draw.append(_source.get_axis_aligned_bounding_box())
             to_draw.append(_target.get_axis_aligned_bounding_box())
 
-        draw_geometries(geometries=to_draw, window_name="Registration Result")
+        draw_geometries(geometries=to_draw, window_name=f"{self._name} Registration Result")
 
     @abstractmethod
     def run(self, source: InputTypes, target: InputTypes, **kwargs: Any) -> RegistrationResult:

@@ -3,13 +3,13 @@
 Files:
     __init__.py: This file.
     registration.py: Point cloud registration functionality.
-    interfaces.py: Intefaces and base classes.
+    interfaces.py: Interfaces and base classes.
     utils.py: Utility functions used throughout the project.
 
 Classes:
     registration.IterativeClosestPoint: ICP functionality.
     registration.FastGlobalRegistration: FGR functionality.
-    registration.EstimationMethodTypes: Estimation method style flags.
+    registration.ICPTypes: Estimation method style flags.
     interfaces.RegistrationInterface: Interface for all registration classes.
     utils.ValueTypes: Flags for default values.
     utils.SampleTypes: Sample style flags.
