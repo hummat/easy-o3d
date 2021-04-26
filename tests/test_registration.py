@@ -1,3 +1,5 @@
+"""Integration tests for Easy Open3D."""
+
 import numpy as np
 import pytest
 

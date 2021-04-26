@@ -384,6 +384,7 @@ class RANSAC(RegistrationInterface):
         run(source, target, source_feature, target_feature, ...): Runs the RANSAC algorithm between `source` and
                                                                   `target` point cloud and their corresponding FPFH
                                                                   features without any initial pose information.
+        _eval_checkers():
     """
     def __init__(self,
                  algorithm: Union[ransac_feature, ransac_correspondence] = ransac_feature,
@@ -429,6 +430,14 @@ class RANSAC(RegistrationInterface):
         self.criteria = RANSACConvergenceCriteria(max_iteration=self.max_iteration, confidence=self.confidence)
 
     def _eval_checkers(self, **kwargs: Any) -> Union[List[CorrespondenceChecker], List]:
+        """Constructs point-pair correspondence checker list from given checker types list.
+
+        Args:
+            **kwargs: Checkers and optional additional keyword arguments passed to corresponding checkers.
+
+        Returns:
+            List of point-pair correspondence checkers used during RANSAC execution.
+        """
         checkers = kwargs.get("checkers")
         if isinstance(checkers, (list, tuple)):
             checker_list = list()

@@ -1,3 +1,5 @@
+"""Unittests for the utils module."""
+
 import copy
 
 import numpy as np

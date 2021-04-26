@@ -16,7 +16,6 @@ Functions:
                                                     and vertices.
     get_point_cloud_from_points: Convenience function to obtain point clouds from points.
     sample_point_cloud_from_triangle_mesh: Convenience function to obtain point clouds from triangle meshes.
-
     get_camera_intrinsic_from_array: Constructs camera intrinsic object from image dimensions and camara intrinsic data.
     get_rgbd_image: Constructs an RGB-D image from a color and a depth image.
     eval_image_type: Convenience function constructing an RGB or RGB-D image based on input type.

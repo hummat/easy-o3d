@@ -1,3 +1,5 @@
+"""Unittests for the interfaces module."""
+
 from .context import interfaces
 
 
