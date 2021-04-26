@@ -12,7 +12,7 @@ Classes:
 import copy
 import logging
 import time
-from typing import Any, Union, Tuple, List
+from typing import Any, Union, Tuple, List, Dict
 
 import numpy as np
 import open3d as o3d
@@ -98,7 +98,7 @@ class IterativeClosestPoint(RegistrationInterface):
                  with_scaling: bool = False,
                  kernel: KernelTypes = KernelTypes.NONE,
                  kernel_noise_std: float = 0.1,
-                 data_to_cache: dict = None,
+                 data_to_cache: Union[Dict[Any, InputTypes], None] = None,
                  **kwargs: Any) -> None:
         """
         Args:
@@ -124,8 +124,15 @@ class IterativeClosestPoint(RegistrationInterface):
 
         self.algorithm = o3d.pipelines.registration.registration_icp
         self.estimation_method = estimation_method
-        if self.estimation_method == ICPTypes.COLOR:
+        if self.estimation_method == ICPTypes.POINT:
+            self._name = f"POINT_TO_POINT_{self._name}"
+        elif self.estimation_method == ICPTypes.PLANE:
+            self._name = f"POINT_TO_PLANE_{self._name}"
+        elif self.estimation_method == ICPTypes.COLOR:
+            self._name = f"COLORED_{self._name}"
             self.algorithm = o3d.pipelines.registration.registration_colored_icp
+        else:
+            raise ValueError(f"`estimation_method` must be one of `ICPTypes` but is {type(estimation_method)}.")
         self.with_scaling = with_scaling
         self.kernel = kernel
         self.kernel_noise_std = kernel_noise_std
@@ -137,7 +144,7 @@ class IterativeClosestPoint(RegistrationInterface):
     def run(self,
             source: InputTypes,
             target: InputTypes,
-            init: np.ndarray = np.eye(4),
+            init: Union[np.ndarray, list] = np.eye(4),
             crop_target_around_source: bool = False,
             crop_scale: float = 1.0,
             draw: bool = False,
@@ -150,7 +157,7 @@ class IterativeClosestPoint(RegistrationInterface):
         Args:
             source: The source data.
             target: The target data.
-            init: The initial pose of `source`.
+            init: The initial pose of `source`. Can be translation, rotation or transformation.
             crop_target_around_source: Crops `target` around the bounding box of `source`. Should only be used if `init`
                                        is already quite accurate.
             crop_scale: The scale of the `source` bounding box used for cropping `target`. Increase if `init` is
@@ -163,6 +170,19 @@ class IterativeClosestPoint(RegistrationInterface):
             `source` and `target`.
         """
         start = time.time()
+
+        _init = np.eye(4)
+        init = np.asarray(init)
+        if init.size in [3, 4]:
+            _init[:3, 3] = init.ravel()[:3]
+        elif init.size == 9:
+            _init[:3, :3] = init.reshape(3, 3)
+        elif init.size == 16:
+            _init = init.reshape(4, 4)
+        else:
+            raise ValueError("`init` needs to be a valid translation, rotation or transformation in natural or"
+                             "homogeneous coordinates, i.e. of size 3, 4, 9 or 16.")
+
         _source = self._eval_data(data_key_or_value=source, **kwargs)
         _target = self._eval_data(data_key_or_value=target, **kwargs)
 
@@ -221,7 +241,7 @@ class IterativeClosestPoint(RegistrationInterface):
         result = self.algorithm(source=_source,
                                 target=_target,
                                 max_correspondence_distance=self.max_correspondence_distance,
-                                init=init,
+                                init=_init,
                                 estimation_method=self.estimation_method(**estimation_method_kwargs),
                                 criteria=self.criteria)
         logger.debug(f"{self._name} took {time.time() - start} seconds.")
@@ -253,7 +273,7 @@ class FastGlobalRegistration(RegistrationInterface):
     def __init__(self,
                  max_iteration: int = 64,
                  max_correspondence_distance: float = 0.005,  # 5mm
-                 data_to_cache: dict = None,
+                 data_to_cache: Union[Dict[Any, InputTypes], None] = None,
                  **kwargs: Any) -> None:
         """
         Args:
@@ -396,7 +416,7 @@ class RANSAC(RegistrationInterface):
                  checkers: Tuple[CheckerTypes] = (CheckerTypes.EDGE, CheckerTypes.DISTANCE),
                  similarity_threshold: float = 0.9,
                  normal_angle_threshold: float = 0.52,  # ~30° in radians
-                 data_to_cache: dict = None,
+                 data_to_cache: Union[Dict[Any, InputTypes], None] = None,
                  **kwargs: Any) -> None:
         """
         Args:

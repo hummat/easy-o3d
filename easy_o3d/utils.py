@@ -153,10 +153,10 @@ def process_point_cloud(point_cloud: PointCloud,
                         transform: np.ndarray = None,
                         scale: float = 1.0,
                         estimate_normals: bool = False,
+                        recalculate_normals: bool = False,
                         fast_normal_computation: bool = True,
                         normalize_normals: bool = False,
                         orient_normals: OrientationTypes = OrientationTypes.NONE,
-                        recalculate_normals: bool = False,
                         compute_feature: bool = False,
                         search_param: SearchParamTypes = SearchParamTypes.HYBRID,
                         search_param_knn: int = 30,
@@ -187,10 +187,10 @@ def process_point_cloud(point_cloud: PointCloud,
         transform: Homogeneous transformation. Also accepts translation vector or rotation matrix.
         scale: Scales the point cloud.
         estimate_normals: Estimate vertex normals.
+        recalculate_normals: Recalculate normals if the point cloud already has normals.
         fast_normal_computation: Use fast normal computation algorithm.
         normalize_normals: Scale normals to unit length.
         orient_normals: Orient normals towards: plane spanned by their neighbors, an orientation or the camera location.
-        recalculate_normals: Recalculate normals if the point cloud already has normals.
         compute_feature: Compute FPFH feature for global registration algorithms.
         search_param: Normal and FPFH feature computation search parameters. Can be radius, kNN or both (hybrid).
         search_param_knn: Compute normals and FPFH features based on k neighboring vertices.

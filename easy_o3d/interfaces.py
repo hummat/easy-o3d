@@ -8,12 +8,13 @@ import copy
 import hashlib
 import logging
 from abc import ABC, abstractmethod
-from typing import Any, Union, Dict
+from typing import Any, Union, Dict, Tuple, List
 
 import numpy as np
 import open3d as o3d
 
-from .utils import InputTypes, eval_data, draw_geometries
+from .utils import (InputTypes, DownsampleTypes, SearchParamTypes, OrientationTypes, eval_data, draw_geometries,
+                    process_point_cloud)
 
 RegistrationResult = o3d.pipelines.registration.RegistrationResult
 TriangleMesh = o3d.geometry.TriangleMesh
@@ -189,3 +190,93 @@ class RegistrationInterface(ABC):
             `source` and `target`.
         """
         raise NotImplementedError("A derived class should implement this method.")
+
+    def run_multi_scale(self,
+                        source: InputTypes,
+                        target: InputTypes,
+                        init: [np.ndarray, list] = np.eye(4),
+                        source_scales: Union[Tuple[float], List[float]] = (0.04, 0.02, 0.01),
+                        target_scales: Union[Tuple[float], List[float], None] = None,
+                        iterations: Union[Tuple[int], List[int]] = (50, 30, 14),
+                        radius_multiplier: Union[Tuple[int], List[int]] = (2, 5),
+                        **kwargs: Any) -> RegistrationResult:
+        if target_scales is None:
+            target_scales = source_scales
+        assert len(source_scales) == len(iterations) == len(target_scales),\
+            "Need to provide the same number of scales and iterations."
+
+        _source = self._eval_data(data_key_or_value=source, **kwargs)
+        _target = self._eval_data(data_key_or_value=target, **kwargs)
+
+        current_result = None
+        current_transformation = init
+        source_feature = None
+        target_feature = None
+        for i, (source_scale, target_scale, iteration) in enumerate(zip(source_scales, target_scales, iterations)):
+            source_radius = radius_multiplier[0] * kwargs.get("search_param_radius", source_scale)
+            target_radius = radius_multiplier[0] * kwargs.get("search_param_radius", target_scale)
+            logger.debug(f"Iteration {i + 1}/{len(iterations)} with scales={source_scale, target_scale},"
+                         f"iterations={iteration}, radii={source_radius, target_radius}")
+
+            source_down = process_point_cloud(point_cloud=_source,
+                                              downsample=kwargs.get("downsample", DownsampleTypes.VOXEL),
+                                              downsample_factor=source_scale,
+                                              estimate_normals=False if "POINT_TO_POINT" in self._name else True,
+                                              recalculate_normals=kwargs.get("recalculate_normals", False),
+                                              orient_normals=kwargs.get("orient_normals", OrientationTypes.NONE),
+                                              search_param=kwargs.get("search_param", SearchParamTypes.HYBRID),
+                                              search_param_radius=source_radius,
+                                              search_param_knn=kwargs.get("search_param_knn", 30))
+            target_down = process_point_cloud(point_cloud=_target,
+                                              downsample=kwargs.get("downsample", DownsampleTypes.VOXEL),
+                                              downsample_factor=target_scale,
+                                              estimate_normals=False if "POINT_TO_POINT" in self._name else True,
+                                              recalculate_normals=kwargs.get("recalculate_normals", False),
+                                              orient_normals=kwargs.get("orient_normals", OrientationTypes.NONE),
+                                              search_param=kwargs.get("search_param", SearchParamTypes.HYBRID),
+                                              search_param_radius=target_radius,
+                                              search_param_knn=kwargs.get("search_param_knn", 30))
+            if "ICP" in self._name:
+                current_result = self.run(source=source_down,
+                                          target=target_down,
+                                          max_correspondence_distance=source_radius,
+                                          init=current_transformation,
+                                          max_iteration=iteration,
+                                          **kwargs)
+            # TODO: Test this
+            else:
+                source_down = source_down.transform(current_transformation)
+                source_radius = radius_multiplier[1] * kwargs.get("search_param_radius", source_scale)
+                target_radius = radius_multiplier[1] * kwargs.get("search_param_radius", target_scale)
+                if source_feature is None:
+                    _, source_feature = process_point_cloud(point_cloud=source_down,
+                                                            compute_feature=True,
+                                                            search_param=kwargs.get("search_param",
+                                                                                    SearchParamTypes.HYBRID),
+                                                            search_param_radius=source_radius,
+                                                            search_param_knn=kwargs.get("search_param_knn", 100))
+                if target_feature is None:
+                    _, target_feature = process_point_cloud(point_cloud=target_down,
+                                                            compute_feature=True,
+                                                            search_param=kwargs.get("search_param",
+                                                                                    SearchParamTypes.HYBRID),
+                                                            search_param_radius=target_radius,
+                                                            search_param_knn=kwargs.get("search_param_knn", 100))
+                current_result = self.run(source=source_down,
+                                          target=target_down,
+                                          max_correspondence_distance=source_radius,
+                                          source_feature=source_feature,
+                                          target_feature=target_feature,
+                                          max_iteration=iteration,
+                                          **kwargs)
+                current_result.transformation = np.dot(current_result.transformation, current_transformation)
+            current_transformation = current_result.transformation
+        return current_result
+
+    def run_multi_process(self,
+                          func,
+                          source_list: List[InputTypes],
+                          target_list: List[InputTypes],
+                          **kwargs: Any) -> List[RegistrationResult]:
+        # TODO: Implement this
+        pass
