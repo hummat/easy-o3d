@@ -5,9 +5,19 @@ from .context import registration, utils
 
 
 @pytest.fixture
-def global_data():
-    source = utils.eval_data(data="tests/test_data/suzanne.ply", number_of_points=10000)
-    target = utils.eval_data(data="tests/test_data/suzanne_on_chair.ply", number_of_points=100000)
+def source_path():
+    return "tests/test_data/suzanne.ply"
+
+
+@pytest.fixture
+def target_path():
+    return "tests/test_data/suzanne_on_chair.ply"
+
+
+@pytest.fixture
+def global_data(source_path, target_path):
+    source = utils.eval_data(data=source_path, number_of_points=10000)
+    target = utils.eval_data(data=target_path, number_of_points=100000)
     return source, target
 
 

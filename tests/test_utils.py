@@ -2,36 +2,60 @@ import copy
 
 import numpy as np
 import open3d as o3d
+import pytest
 
 from .context import utils
 
 
-def test_eval_data_return_types():
-    points = np.random.random(size=1000 * 3).reshape(1000, 3)
+@pytest.fixture
+def points():
+    return np.random.random(size=1000 * 3).reshape(1000, 3)
+
+
+@pytest.fixture
+def point_cloud(points):
     point_cloud = o3d.geometry.PointCloud()
     point_cloud.points = o3d.utility.Vector3dVector(points)
-    image = np.ones(shape=(640, 480)).astype(np.float32)
-    rgbd_image = o3d.geometry.RGBDImage.create_from_color_and_depth(color=o3d.geometry.Image(image),
-                                                                    depth=o3d.geometry.Image(image))
-    mesh = o3d.io.read_triangle_mesh(filename="tests/test_data/suzanne.ply")
+    return point_cloud
 
-    assert isinstance(utils.eval_data(data="tests/test_data/suzanne.ply"), o3d.geometry.PointCloud)
+
+@pytest.fixture
+def image():
+    return np.ones(shape=(640, 480)).astype(np.float32)
+
+
+# noinspection PyTypeChecker
+@pytest.fixture
+def rgbd_image(image):
+    return o3d.geometry.RGBDImage().create_from_color_and_depth(color=o3d.geometry.Image(image),
+                                                                depth=o3d.geometry.Image(image))
+
+
+@pytest.fixture
+def source_path():
+    return "tests/test_data/suzanne.ply"
+
+
+@pytest.fixture
+def mesh(source_path):
+    return o3d.io.read_triangle_mesh(filename=source_path)
+
+
+def test_eval_data_return_types(point_cloud, points, image, rgbd_image, mesh, source_path):
+    assert isinstance(utils.eval_data(data=source_path), o3d.geometry.PointCloud)
     assert isinstance(utils.eval_data(data=point_cloud), o3d.geometry.PointCloud)
     assert isinstance(utils.eval_data(data=points), o3d.geometry.PointCloud)
     assert isinstance(utils.eval_data(data=o3d.geometry.Image(image),
                                       camera_intrinsic=np.eye(3)), o3d.geometry.PointCloud)
     assert isinstance(utils.eval_data(data=rgbd_image, camera_intrinsic=np.eye(3)), o3d.geometry.PointCloud)
-    assert isinstance(utils.eval_data(data="tests/test_data/suzanne.ply", number_of_points=1000), o3d.geometry.PointCloud)
+    assert isinstance(utils.eval_data(data=source_path, number_of_points=1000), o3d.geometry.PointCloud)
     assert isinstance(utils.eval_data(data=mesh, number_of_points=1000), o3d.geometry.PointCloud)
     assert isinstance(utils.eval_data(data=image, camera_intrinsic=np.eye(3)), o3d.geometry.PointCloud)
 
 
 class TestProcessPointCloud:
 
-    def test_process_point_cloud_downsample(self):
-        point_cloud = o3d.geometry.PointCloud()
-        point_cloud.points = o3d.utility.Vector3dVector(np.random.random(size=1000 * 3).reshape(1000, 3))
-
+    def test_process_point_cloud_downsample(self, point_cloud):
         # Voxel
         point_cloud_orig = copy.deepcopy(point_cloud)
         _point_cloud = utils.process_point_cloud(point_cloud=point_cloud_orig,
@@ -48,10 +72,7 @@ class TestProcessPointCloud:
         assert _point_cloud is not point_cloud_orig
         assert np.asarray(point_cloud_orig.points).size // 2 == np.asarray(_point_cloud.points).size
 
-    def test_process_point_cloud_remove_outlier(self):
-        point_cloud = o3d.geometry.PointCloud()
-        point_cloud.points = o3d.utility.Vector3dVector(np.random.random(size=1000 * 3).reshape(1000, 3))
-
+    def test_process_point_cloud_remove_outlier(self, point_cloud):
         # Statistical
         point_cloud_orig = copy.deepcopy(point_cloud)
         _point_cloud = utils.process_point_cloud(point_cloud=point_cloud_orig,
@@ -72,10 +93,7 @@ class TestProcessPointCloud:
         assert len(np.asarray(_point_cloud.points))
         assert len(np.asarray(point_cloud_orig.points)) != len(np.asarray(_point_cloud.points))
 
-    def test_process_point_cloud_transform(self):
-        point_cloud = o3d.geometry.PointCloud()
-        point_cloud.points = o3d.utility.Vector3dVector(np.random.random(size=1000 * 3).reshape(1000, 3))
-
+    def test_process_point_cloud_transform(self, point_cloud):
         # Translation
         point_cloud_orig = copy.deepcopy(point_cloud)
         t1 = np.array([1.3, 2.0, 5.7])
@@ -96,19 +114,13 @@ class TestProcessPointCloud:
             assert _point_cloud is not point_cloud_orig
             assert not np.allclose(np.asarray(_point_cloud.points), np.asarray(point_cloud_orig.points))
 
-    def test_process_point_cloud_scale(self):
-        point_cloud = o3d.geometry.PointCloud()
-        point_cloud.points = o3d.utility.Vector3dVector(np.random.random(size=1000 * 3).reshape(1000, 3))
-
+    def test_process_point_cloud_scale(self, point_cloud):
         _point_cloud = utils.process_point_cloud(point_cloud=point_cloud, scale=0.5)
         assert _point_cloud is not point_cloud
         assert np.asarray(_point_cloud.points).mean() < np.asarray(point_cloud.points).mean()
         assert _point_cloud.get_max_bound().max() <= 0.5
 
-    def test_process_point_cloud_normals(self):
-        point_cloud = o3d.geometry.PointCloud()
-        point_cloud.points = o3d.utility.Vector3dVector(np.random.random(size=1000 * 3).reshape(1000, 3))
-
+    def test_process_point_cloud_normals(self, point_cloud):
         # Estimate
         _point_cloud = utils.process_point_cloud(point_cloud=point_cloud, estimate_normals=True)
         assert _point_cloud is not point_cloud
@@ -127,20 +139,14 @@ class TestProcessPointCloud:
         assert _point_cloud is not point_cloud
         assert not np.allclose(np.asarray(_point_cloud.normals), np.asarray(point_cloud.normals))
 
-    def test_process_point_cloud_compute_feature(self):
-        point_cloud = o3d.geometry.PointCloud()
-        point_cloud.points = o3d.utility.Vector3dVector(np.random.random(size=1000 * 3).reshape(1000, 3))
-
+    def test_process_point_cloud_compute_feature(self, point_cloud):
         _point_cloud, feature = utils.process_point_cloud(point_cloud=point_cloud,
                                                           estimate_normals=True,
                                                           compute_feature=True)
         assert _point_cloud is not point_cloud
         assert feature is not None
 
-    def test_process_point_cloud_return_type(self):
-        point_cloud = o3d.geometry.PointCloud()
-        point_cloud.points = o3d.utility.Vector3dVector(np.random.random(size=1000 * 3).reshape(1000, 3))
-
+    def test_process_point_cloud_return_type(self, point_cloud):
         point_cloud_orig = copy.deepcopy(point_cloud)
         _point_cloud = utils.process_point_cloud(point_cloud=point_cloud_orig)
         assert isinstance(point_cloud, o3d.geometry.PointCloud)

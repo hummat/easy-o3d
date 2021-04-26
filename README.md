@@ -1,6 +1,6 @@
 # Easy Open3D
 This is an easy-to-use wrapper around, as well as utility functions and scripts for, some of
-[Open3D](http://www.open3d.org/) 's registration functionality.
+[Open3D](http://www.open3d.org) 's registration functionality.
 
 _Head over to the repository's [**GitHub** pages site](https://hummat.github.io/easy-o3d) for a more interactive
 version of this README!_
@@ -9,10 +9,10 @@ version of this README!_
 In 3D data analysis, the term _registration_ usually refers to the process of aligning two partly overlapping point
 clouds such that the result is a merged version of the input. It is frequently used to obtain a 3D scan of a large scene
 by stitching together several smaller parts.
-In robotics however, we can use the same algorithms to register a 3D model of an object we want to manipulate to the
-part of the 3D scan (obtained through depth sensors) of the scene the robot operates in to find its pose in this scene.
-The pose of an object consists of its rotation and translation in some coordinate frame, typically the
-robots head frame, camera frame or world frame.
+In robotics however, we can use the same algorithms to register a 3D model of an object (called `source`) we want to
+manipulate to the part of the 3D scan (obtained through depth sensors; called `target`) of the scene the robot operates
+in to find its pose in this scene. The pose of an object consists of its rotation and translation in some coordinate
+frame, typically the robots head frame, camera frame or world frame.
 
 ### A simple yet slightly contrived example
 TODO
@@ -39,7 +39,7 @@ and use Pythons package manager `pip` to install it into your current Python env
 pip install /path/to/easy-o3d/repository/clone
 ```
 To use the [hyperparameter optimization script](https://github.com/hummat/easy-o3d/blob/master/scripts/hyperopt.py),
-also install the optional dependency `scikit-optimize` with:
+also install the optional dependency `scikit-optimize`:
 ```commandline
 pip install /path/to/easy-o3d/repository/clone[hyper]
 ```

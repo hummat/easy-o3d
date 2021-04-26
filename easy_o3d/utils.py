@@ -43,6 +43,7 @@ from typing import Any, List, Union, Tuple
 import numpy as np
 import open3d as o3d
 
+PinholeCameraParameters = o3d.camera.PinholeCameraParameters
 PinholeCameraIntrinsic = o3d.camera.PinholeCameraIntrinsic
 PinholeCameraIntrinsicParameters = o3d.camera.PinholeCameraIntrinsicParameters
 Image = o3d.geometry.Image
@@ -147,7 +148,7 @@ def eval_data(data: InputTypes, **kwargs: Any) -> PointCloud:
 
 def process_point_cloud(point_cloud: PointCloud,
                         downsample: DownsampleTypes = DownsampleTypes.NONE,
-                        downsample_factor: Union[float, int] = 1.0,
+                        downsample_factor: Union[float, int] = 1,
                         remove_outlier: OutlierTypes = OutlierTypes.NONE,
                         outlier_std_ratio: float = 1.0,
                         transform: np.ndarray = None,
@@ -189,7 +190,7 @@ def process_point_cloud(point_cloud: PointCloud,
         estimate_normals: Estimate vertex normals.
         fast_normal_computation: Use fast normal computation algorithm.
         normalize_normals: Scale normals to unit length.
-        orient_normals: Orient normals towards a plane spanned by their neighbors, an orientation or the camera location.
+        orient_normals: Orient normals towards: plane spanned by their neighbors, an orientation or the camera location.
         recalculate_normals: Recalculate normals if the point cloud already has normals.
         compute_feature: Compute FPFH feature for global registration algorithms.
         search_param: Normal and FPFH feature computation search parameters. Can be radius, kNN or both (hybrid).
@@ -233,17 +234,19 @@ def process_point_cloud(point_cloud: PointCloud,
         if _transform.size in [3, 4]:
             _point_cloud.translate(translation=_transform.ravel()[:3], relative=True)
         elif _transform.size == 9:
+            # noinspection PyArgumentList
             _point_cloud.rotate(R=_transform.reshape(3, 3), center=_point_cloud.get_center())
         elif _transform.size == 16:
             _point_cloud.transform(_transform.reshape(4, 4))
         else:
-            raise ValueError("`transform` needs to be a valid translation, rotation or transformation in natural or" \
+            raise ValueError("`transform` needs to be a valid translation, rotation or transformation in natural or"
                              "homogeneous coordinates, i.e. of size 3, 4, 9 or 16.")
 
     if scale != 1.0:
         logger.debug(f"Scaling point cloud with factor {scale}.")
         logger.debug("Using custom scaling code as PointCloud.scale doesn't seem to work.")
         _point_cloud.points = o3d.utility.Vector3dVector(np.asarray(_point_cloud.points) * scale)
+        # FIXME: Open3D factory `scale` function doesn't do anything.
         # _point_cloud = _point_cloud.scale(scale=scale, center=_point_cloud.get_center())
 
     if estimate_normals or compute_feature:
@@ -254,9 +257,11 @@ def process_point_cloud(point_cloud: PointCloud,
         elif search_param == SearchParamTypes.HYBRID:
             _search_param = o3d.geometry.KDTreeSearchParamHybrid(radius=search_param_radius, max_nn=search_param_knn)
         else:
-            raise ValueError(f"`search_param` needs to be one of `SearchParamTypes` but is {type(search_param)}.")
+            raise TypeError(f"`search_param` needs have type `SearchParamTypes` but has type {type(search_param)}.")
+    else:
+        _search_param = None
 
-    if estimate_normals and (not _point_cloud.has_normals() or recalculate_normals):
+    if estimate_normals and (not _point_cloud.has_normals() or recalculate_normals) and _search_param is not None:
         logger.debug(f"Estimating point cloud normals using method {search_param}.")
         if recalculate_normals:
             _point_cloud.normals = o3d.utility.Vector3dVector()
@@ -269,7 +274,7 @@ def process_point_cloud(point_cloud: PointCloud,
             logger.warning("Point cloud doesnt' have normals so can't normalize them.")
 
     if orient_normals != OrientationTypes.NONE:
-        assert _point_cloud.has_normals(), "Point cloud doesn't have normals so can't orient them."
+        assert _point_cloud.has_normals(), "Point cloud doesn't have normals which could be oriented."
         logger.debug(f"Orienting normals towards {orient_normals}.")
         if orient_normals == OrientationTypes.TANGENT_PLANE:
             _point_cloud.orient_normals_consistent_tangent_plane(k=search_param_knn)
@@ -283,16 +288,19 @@ def process_point_cloud(point_cloud: PointCloud,
     if compute_feature:
         assert _point_cloud.has_normals(), "Point cloud doesn't have normals which are needed to compute FPFH feature."
         logger.debug(f"Computing FPFH features using method {search_param}.")
+        # noinspection PyTypeChecker
         feature = o3d.pipelines.registration.compute_fpfh_feature(input=_point_cloud, search_param=_search_param)
+    else:
+        feature = None
 
     logger.debug(f"Processing took {time.time() - start} seconds.")
 
     if draw:
         if not _point_cloud.has_colors():
             _point_cloud.paint_uniform_color([0.8, 0.0, 0.0])
-        o3d.visualization.draw_geometries([_point_cloud], window_name="Processed Point Cloud", width=800, height=600)
+        draw_geometries(geometries=[_point_cloud], window_name="Processed Point Cloud")
 
-    if compute_feature:
+    if compute_feature and feature:
         return _point_cloud, feature
     else:
         return _point_cloud
@@ -324,7 +332,8 @@ def read_triangle_mesh(filename: str, **kwargs: Any) -> TriangleMesh:
     return o3d.io.read_triangle_mesh(filename, **kwargs)
 
 
-def get_triangle_mesh_from_triangles_and_vertices(triangles: np.ndarray, vertices: np.ndarray) -> TriangleMesh:
+def get_triangle_mesh_from_triangles_and_vertices(triangles: Union[np.ndarray, list],
+                                                  vertices: Union[np.ndarray, list]) -> TriangleMesh:
     """Convenience function to obtain triangle meshes from triangles and vertices.
 
     Args:
@@ -384,8 +393,8 @@ def sample_point_cloud_from_triangle_mesh(mesh_or_filename: Union[TriangleMesh, 
         raise ValueError(f"Sample style {sample_type} not supported.")
 
 
-def get_camera_intrinsic_from_array(image_or_path: ImageTypes, camera_intrinsic: Union[np.ndarray,
-                                                                                       list]) -> PinholeCameraIntrinsic:
+def get_camera_intrinsic_from_array(image_or_path: ImageTypes,
+                                    camera_intrinsic: Union[np.ndarray, list]) -> PinholeCameraIntrinsic:
     """Constructs camera intrinsic object from image dimensions and camara intrinsic data.
 
     Args:
@@ -393,7 +402,7 @@ def get_camera_intrinsic_from_array(image_or_path: ImageTypes, camera_intrinsic:
         camera_intrinsic: An array holding the camera intrinsic parameters.
 
     Returns:
-        A camera intrinsic object.
+        The camera intrinsic object.
     """
     assert camera_intrinsic.size == 9, f"Camera intrinsic must be 9 values but is {camera_intrinsic.size}."
     intrinsic = camera_intrinsic
@@ -409,12 +418,13 @@ def get_camera_intrinsic_from_array(image_or_path: ImageTypes, camera_intrinsic:
     return PinholeCameraIntrinsic(width=width, height=height, fx=fx, fy=fy, cx=cx, cy=cy)
 
 
+# noinspection PyTypeChecker
 def get_rgbd_image(color: ImageTypes, depth: Union[ImageTypes, None] = None, **kwargs: Any) -> RGBDImage:
-    """Constructs an RGB-D image object from a color and a depth image.
+    """Constructs an RGB-D image object from color and depth data.
 
     Args:
-        color: The RGB image.
-        depth: The depth image.
+        color: The RGB image data.
+        depth: The depth image data. If `None`, `color` needs to be RGB-D, i.e. needs to contain a depth channel.
         **kwargs: Optional additional keyword arguments.
 
     Returns:
@@ -429,6 +439,8 @@ def get_rgbd_image(color: ImageTypes, depth: Union[ImageTypes, None] = None, **k
         _color = np.asarray(color)
     elif isinstance(color, np.ndarray):
         _color = color
+    else:
+        raise TypeError(f"`color` must have type {ImageTypes} but has type {type(color)}.")
 
     if isinstance(depth, str):
         _depth = np.asarray(o3d.io.read_image(depth))
@@ -436,14 +448,16 @@ def get_rgbd_image(color: ImageTypes, depth: Union[ImageTypes, None] = None, **k
         _depth = np.asarray(depth)
     elif isinstance(depth, np.ndarray):
         _depth = depth
+    else:
+        raise TypeError(f"`depth` must have type {ImageTypes} or `None` but has type {type(depth)}.")
 
     if _depth is None:
         assert len(_color.shape) == 4, "Color image must have depth channel if depth is not provided."
         _color = Image(_color[:, :, :3])
         _depth = Image(_color[:, :, 3])
-        return RGBDImage.create_from_color_and_depth(color=_color, depth=_depth, **kwargs)
+        return RGBDImage().create_from_color_and_depth(color=_color, depth=_depth, **kwargs)
     else:
-        return RGBDImage.create_from_color_and_depth(color=Image(_color), depth=Image(_depth), **kwargs)
+        return RGBDImage().create_from_color_and_depth(color=Image(_color), depth=Image(_depth), **kwargs)
 
 
 def eval_image_type(image_or_path: RGBDImageTypes, **kwargs: Any) -> Union[Image, RGBDImage]:
@@ -523,19 +537,17 @@ def convert_depth_image_to_point_cloud(image_or_path: ImageTypes,
     image = eval_image_type(image_or_path=image_or_path, **kwargs)
     assert isinstance(image, Image)
     assert len(np.asarray(image).shape) == 2, f"Depth image must have shape WxH but is {image.shape}."
+
     intrinsic = eval_camera_intrinsic_type(image_or_path=image, camera_intrinsic=camera_intrinsic)
     extrinsic = np.asarray(camera_extrinsic).reshape(4, 4)
 
-    nkwargs = {
-        "depth": image,
-        "intrinsic": intrinsic,
-        "extrinsic": extrinsic,
-        "depth_scale": depth_scale,
-        "depth_trunc": depth_trunc,
-        "stride": kwargs.get("stride", 1),
-        "project_valid_depth_only": kwargs.get("project_valid_depth_only", True)
-    }
-    return PointCloud.create_from_depth_image(**nkwargs)
+    return PointCloud().create_from_depth_image(depth=image,
+                                                intrinsic=intrinsic,
+                                                extrinsic=extrinsic,
+                                                depth_scale=depth_scale,
+                                                depth_trunc=depth_trunc,
+                                                stride=kwargs.get("stride", 1),
+                                                project_valid_depth_only=kwargs.get("project_valid_depth_only", True))
 
 
 def convert_rgbd_image_to_point_cloud(rgbd_image_or_path: RGBDImageTypes,
@@ -557,23 +569,19 @@ def convert_rgbd_image_to_point_cloud(rgbd_image_or_path: RGBDImageTypes,
     Returns:
         The point cloud created from the RGB-D image data.
     """
-    nkwargs = {
-        "depth_scale": depth_scale,
-        "depth_trunc": depth_trunc,
-        "convert_rgb_to_intensity": kwargs.get("convert_rgb_to_intensity", False),
-    }
-    rgbd_image = eval_image_type(image_or_path=rgbd_image_or_path, **nkwargs)
+    rgbd_image = eval_image_type(image_or_path=rgbd_image_or_path,
+                                 depth_scale=depth_scale,
+                                 depth_trunc=depth_trunc,
+                                 convert_rgb_to_intensity=kwargs.get("convert_rgb_to_intensity", False))
     assert isinstance(rgbd_image, RGBDImage)
 
     intrinsic = eval_camera_intrinsic_type(image_or_path=rgbd_image, camera_intrinsic=camera_intrinsic)
     extrinsic = np.asarray(camera_extrinsic).reshape(4, 4)
-    nkwargs = {
-        "image": rgbd_image,
-        "intrinsic": intrinsic,
-        "extrinsic": extrinsic,
-        "project_valid_depth_only": kwargs.get("project_valid_depth_only", True)
-    }
-    return PointCloud.create_from_rgbd_image(**nkwargs)
+
+    return PointCloud().create_from_rgbd_image(image=rgbd_image,
+                                               intrinsic=intrinsic,
+                                               extrinsic=extrinsic,
+                                               project_valid_depth_only=kwargs.get("project_valid_depth_only", True))
 
 
 def get_transformation_matrix_from_xyz(rotation_xyz: Union[np.array, list] = np.zeros(3),
@@ -589,7 +597,7 @@ def get_transformation_matrix_from_xyz(rotation_xyz: Union[np.array, list] = np.
     """
     rx, ry, rz = np.asarray(rotation_xyz).ravel()[:3]
     tx, ty, tz = np.asarray(translation_xyz).ravel()[:3]
-    R = PointCloud.get_rotation_matrix_from_xyz(np.array([np.radians(rx), np.radians(ry), np.radians(rz)]))
+    R = PointCloud().get_rotation_matrix_from_xyz(np.array([np.radians(rx), np.radians(ry), np.radians(rz)]))
     t = [tx, ty, tz]
     T = np.eye(4)
     T[:3, :3] = R
@@ -611,7 +619,7 @@ def get_transformation_matrix_from_quaternion(rotation_wxyz: Union[np.array, lis
     """
     rotation = np.asarray(rotation_wxyz).ravel()[:4]
     tx, ty, tz = np.asarray(translation_xyz).ravel()[:3]
-    R = PointCloud.get_rotation_matrix_from_quaternion(rotation=rotation)
+    R = PointCloud().get_rotation_matrix_from_quaternion(rotation=rotation)
     t = [tx, ty, tz]
     T = np.eye(4)
     T[:3, :3] = R
@@ -620,9 +628,10 @@ def get_transformation_matrix_from_quaternion(rotation_wxyz: Union[np.array, lis
     return T
 
 
-def get_camera_parameters_from_blenderproc_bopwriter(scene_id: Union[int, str], path_to_scene_camera_json: str,
-                                                     path_to_camera_json,
-                                                     output_path: None) -> o3d.camera.PinholeCameraParameters:
+def get_camera_parameters_from_blenderproc_bopwriter(scene_id: Union[int, str],
+                                                     path_to_scene_camera_json: str,
+                                                     path_to_camera_json: str,
+                                                     output_path: Union[str, None] = None) -> PinholeCameraParameters:
     """Constructs intrinsic and extrinsic camera parameter object from BlenderProc BopWriter data.
 
     Args:
@@ -655,10 +664,10 @@ def get_camera_parameters_from_blenderproc_bopwriter(scene_id: Union[int, str], 
     width, height = intrinsic_data['width'], intrinsic_data['height']
     cx, cy = intrinsic_data['cx'], intrinsic_data['cy']
     fx, fy = intrinsic_data['fx'], intrinsic_data['fy']
-    intrinsic = o3d.camera.PinholeCameraIntrinsic(width=width, height=height, fx=fx, fy=fy, cx=cx, cy=cy)
+    intrinsic = PinholeCameraIntrinsic(width=width, height=height, fx=fx, fy=fy, cx=cx, cy=cy)
 
     # Set camera parameters
-    camera_parameters = o3d.camera.PinholeCameraParameters()
+    camera_parameters = PinholeCameraParameters()
     camera_parameters.intrinsic = intrinsic
     camera_parameters.extrinsic = extrinsic
 
@@ -677,4 +686,10 @@ def draw_geometries(geometries: list, window_name: str = "Visualizer", size: Tup
         window_name: The name of the visualization window.
         size: The size of the visualization window.
     """
-    o3d.visualization.draw_geometries(geometries, window_name=window_name, width=size[0], height=size[1])
+    o3d.visualization.draw_geometries(geometries,
+                                      window_name=window_name,
+                                      width=size[0],
+                                      height=size[1],
+                                      point_show_normal=False,
+                                      mesh_show_wireframe=False,
+                                      mesh_show_back_face=False)

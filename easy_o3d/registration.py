@@ -1,11 +1,12 @@
 """Point cloud registration functionality.
 
 Classes:
-    registration.IterativeClosestPoint: ICP functionality.
-    registration.FastGlobalRegistration: FGR functionality.
-    registration.RANSAC: RANSAC functionality.
-    registration.ICPTypes: Estimation method style flags.
-    registration.CheckerTypes: RANSAC correspondence checker style flags.
+    IterativeClosestPoint: The Iterative Closest Point (ICP) algorithm.
+    FastGlobalRegistration: The Fast Global Registration (FGR) algorithm.
+    RANSAC: The RANSAC algorithm.
+    ICPTypes: Supported ICP registration types.
+    CheckerTypes: Supported RANSAC correspondence checker types.
+    KernelTypes: Supported ICP Point-To-Plane robust kernel types.
 """
 
 import copy
@@ -38,18 +39,21 @@ RegistrationResult = o3d.pipelines.registration.RegistrationResult
 
 
 class ICPTypes:
+    """Supported ICP registration types."""
     POINT = PointToPoint
     PLANE = PointToPlane
     COLOR = ColoredICP
 
 
 class CheckerTypes:
+    """Supported RANSAC correspondence checker types."""
     EDGE = CorrespondenceCheckerBasedOnEdgeLength
     DISTANCE = CorrespondenceCheckerBasedOnDistance
     NORMAL = CorrespondenceCheckerBasedOnNormal
 
 
 class KernelTypes:
+    """Supported ICP Point-To-Plane robust kernel types."""
     NONE = None
     TUKEY = o3d.pipelines.registration.TukeyLoss
     CAUCHY = o3d.pipelines.registration.CauchyLoss
@@ -63,8 +67,28 @@ logger = logging.getLogger(__name__)
 
 
 class IterativeClosestPoint(RegistrationInterface):
-    """The *Iterative Closest Point* algorithm."""
+    """The *Iterative Closest Point* (ICP) algorithm.
 
+    The goal is to find the rotation and translation, i.e. 6D pose, of a source object found in the target point cloud
+    based on initial pose information.
+
+    Attributes:
+        relative_fitness: If relative change (difference) of fitness score is lower than `relative_fitness`, the
+                          iteration stops.
+        relative_rmse: If relative change (difference) of inliner RMSE is lower than `relative_rmse`, the iteration
+                       stops.
+        max_iteration: Maximum number of iterations before the algorithm is stopped.
+        max_correspondence_distance: Maximum correspondence points-pair distance.
+        estimation_method: The estimation method.
+        with_scaling: Use non-rigid transform in Point-to-Point ICP to align source to target.
+        kernel: Use robust kernel in Point-to-Plane ICP to deal with noise.
+        kernel_noise_std: The estimated/assumed noise standard deviation in the target data used in `kernel`.
+        algorithm: The type of ICP registration algorithm used in `run`.
+
+    Methods:
+        run(source, target, init, ...): Runs the *Iterative Closest Point* algorithm between `source` and `target` point
+                                        cloud with initial pose.
+    """
     def __init__(self,
                  relative_fitness: float = 1e-6,
                  relative_rmse: float = 1e-6,
@@ -80,13 +104,16 @@ class IterativeClosestPoint(RegistrationInterface):
         Args:
             relative_fitness: If relative change (difference) of fitness score is lower than `relative_fitness`,
                               the iteration stops.
-            relative_rmse: If relative change (difference) of inliner RMSE score is lower than `relative_rmse`,
-                           the iteration stops.
-            max_iteration: Maximum iteration before iteration stops.
+            relative_rmse: If relative change (difference) of inliner RMSE is lower than `relative_rmse`, the iteration
+                           stops.
+            max_iteration: Maximum number of iterations before the algorithm is stopped.
             max_correspondence_distance: Maximum correspondence points-pair distance.
-            estimation_method: The estimation method. One of `POINT`, `PLANE` or `COLOR`.
-            data_to_cache: The data to be cached.
-            kwargs: Optional additional keyword arguments used downstream.
+            estimation_method: The estimation method used by ICP.
+            with_scaling: Use non-rigid transform in Point-to-Point ICP to align source to target.
+            kernel: Use robust kernel in Point-to-Plane ICP to deal with noise.
+            kernel_noise_std: The estimated/assumed noise standard deviation in the target data used in `kernel`.
+            data_to_cache: Data to be cached. Refer to base class for details.
+            **kwargs: Optional additional keyword arguments used downstream.
         """
         super().__init__(name="ICP", data_to_cache=data_to_cache, **kwargs)
 
@@ -115,26 +142,25 @@ class IterativeClosestPoint(RegistrationInterface):
             crop_scale: float = 1.0,
             draw: bool = False,
             **kwargs: Any) -> RegistrationResult:
-        """Runs the *Iterative Closest Point* algorithm.
+        """Runs the *Iterative Closest Point* (ICP) algorithm between `source` and `target` point cloud.
 
         The goal is to find the rotation and translation, i.e. 6D pose, of the `source` object, best
-        resembling its actual pose found in the `target` point cloud.
+        resembling its actual pose found in the `target` point cloud using initial pose information `init`.
 
         Args:
-            source (InputTypes): The source data.
-            target (InputTypes): The target data.
-            init (np.ndarray): The initial pose of `source`.
-            crop_target_around_source (bool): Crops `target` around the bounding box of `source`. Should only
-                                              be used if `init` is already quite accurate.
-            crop_scale (float): The scale of the `source` bounding box used for cropping `target`.
-                                Increase if `init` is inaccurate.
-            draw (bool): Visualize the registration result.
-            kwargs (Any): Optional additional keyword arguments. Allows to set thresholds and parameters for ICP.
-                          Please refer to the class constructor documentation.
+            source: The source data.
+            target: The target data.
+            init: The initial pose of `source`.
+            crop_target_around_source: Crops `target` around the bounding box of `source`. Should only be used if `init`
+                                       is already quite accurate.
+            crop_scale: The scale of the `source` bounding box used for cropping `target`. Increase if `init` is
+                        inaccurate.
+            draw: Visualize the registration result.
+            **kwargs: Optional additional keyword arguments. Allows to set thresholds and parameters for ICP.
 
         Returns:
-            RegistrationResult: The registration result containing relative fitness and RMSE
-                                as well as the the transformation between `source` and `target`.
+            The registration result containing relative fitness and RMSE as well as the the transformation between
+            `source` and `target`.
         """
         start = time.time()
         _source = self._eval_data(data_key_or_value=source, **kwargs)
@@ -167,6 +193,7 @@ class IterativeClosestPoint(RegistrationInterface):
         if crop_target_around_source:
             bounding_box = copy.deepcopy(_source).transform(init).get_axis_aligned_bounding_box()
             bounding_box = bounding_box.scale(scale=crop_scale, center=bounding_box.get_center())
+            # noinspection PyArgumentList
             cropped_target = copy.deepcopy(_target).crop(bounding_box=bounding_box)
             _target = cropped_target if not cropped_target.is_empty() else _target
 
@@ -190,6 +217,7 @@ class IterativeClosestPoint(RegistrationInterface):
                 # If cached before, replace with new version with estimated normals
                 self.replace_in_cache(data={target: _target})
 
+        # noinspection PyTypeChecker
         result = self.algorithm(source=_source,
                                 target=_target,
                                 max_correspondence_distance=self.max_correspondence_distance,
@@ -206,13 +234,34 @@ class IterativeClosestPoint(RegistrationInterface):
 
 
 class FastGlobalRegistration(RegistrationInterface):
-    """The *Fast Global Registration* algorithm."""
+    """The *Fast Global Registration* (FGR) algorithm.
 
+    The goal is to find the rotation and translation, i.e. 6D pose, of a source object found in the target point cloud
+    without any initial pose information. As the estimated pose is usually inaccurate, an subsequent ICP refinement
+    is commonly employed.
+
+    Attributes:
+        max_iteration: Maximum number of iterations before the algorithm is stopped.
+        max_correspondence_distance: Maximum correspondence points-pair distance.
+        algorithm: The type of FGR registration algorithm used in `run`.
+        option: Parameter options object used during execution.
+
+    Methods:
+        run(source, target, source_feature, target_feature, ...): Runs the FGR algorithm between `source` and `target`
+                                                                  point cloud without any initial pose information.
+    """
     def __init__(self,
                  max_iteration: int = 64,
                  max_correspondence_distance: float = 0.005,  # 5mm
                  data_to_cache: dict = None,
                  **kwargs: Any) -> None:
+        """
+        Args:
+            max_iteration: Maximum number of iterations before the algorithm is stopped.
+            max_correspondence_distance: Maximum correspondence points-pair distance.
+            data_to_cache: Data to be cached. Refer to base class for details.
+            **kwargs: Optional additional keyword arguments used downstream.
+        """
         super().__init__(name="FGR", data_to_cache=data_to_cache, **kwargs)
 
         self.max_correspondence_distance = max_correspondence_distance
@@ -229,7 +278,20 @@ class FastGlobalRegistration(RegistrationInterface):
             target_feature: Feature = None,
             draw: bool = False,
             **kwargs: Any) -> RegistrationResult:
+        """Runs the Fast Global Registration algorithm between `source` and `target` point cloud.
 
+        The goal is to find the rotation and translation, i.e. 6D pose, of the `source` object, best resembling its
+        actual pose found in the `target` point cloud without any initial pose information. The result is commonly
+        refined by ICP.
+
+        Args:
+            source: The source data.
+            target: The target data.
+            source_feature: The FPFH feature of `source`. Computed based on default values if not provided.
+            target_feature: The FPFH feature of `target`. Computed based on default values if not provided.
+            draw: Visualize the registration result.
+            **kwargs: Optional additional keyword arguments. Allows to set thresholds and parameters for FGR.
+        """
         start = time.time()
         _source = self._eval_data(data_key_or_value=source, **kwargs)
         _target = self._eval_data(data_key_or_value=target, **kwargs)
@@ -284,6 +346,7 @@ class FastGlobalRegistration(RegistrationInterface):
         else:
             _target_feature = target_feature
 
+        # noinspection PyTypeChecker
         result = self.algorithm(source=_source,
                                 target=_target,
                                 source_feature=_source_feature,
@@ -299,8 +362,29 @@ class FastGlobalRegistration(RegistrationInterface):
 
 
 class RANSAC(RegistrationInterface):
-    """The *RANSAC* algorithm."""
+    """The *RANSAC* algorithm.
 
+    The goal is to find the rotation and translation, i.e. 6D pose, of a source object found in the target point cloud
+    without any initial pose information. As the estimated pose is usually inaccurate, an subsequent ICP refinement
+    is commonly employed. Older, but well established alternative to FGR.
+
+    Attributes:
+        max_iteration: Maximum number of iterations before the algorithm is stopped.
+        confidence: Threshold for algorithm convergence based on point-pair correspondence confidence.
+        max_correspondence_distance: Maximum correspondence points-pair distance.
+        similarity_threshold: Edge length similarity checker threshold.
+        normal_angle_threshold: Normal angle similarity checker threshold.
+        ransac_n: Number of point-pair correspondences used for alignment.
+        algorithm: The type of FGR registration algorithm used in `run`.
+        estimation_method: The estimation method used by FGR.
+        checkers: The correspondence checkers used to discard correspondences using low compute metrics.
+        criteria: RANSAC criteria object specifying algorithm convergence thresholds.
+
+    Methods:
+        run(source, target, source_feature, target_feature, ...): Runs the RANSAC algorithm between `source` and
+                                                                  `target` point cloud and their corresponding FPFH
+                                                                  features without any initial pose information.
+    """
     def __init__(self,
                  algorithm: Union[ransac_feature, ransac_correspondence] = ransac_feature,
                  max_iteration=100000,
@@ -313,6 +397,20 @@ class RANSAC(RegistrationInterface):
                  normal_angle_threshold: float = 0.52,  # ~30° in radians
                  data_to_cache: dict = None,
                  **kwargs: Any) -> None:
+        """
+        Args:
+            algorithm: The type of FGR registration algorithm used in `run`.
+            max_iteration: Maximum number of iterations before the algorithm is stopped.
+            confidence: Threshold for algorithm convergence based on point-pair correspondence confidence.
+            max_correspondence_distance:
+            max_correspondence_distance: Maximum correspondence points-pair distance.
+            ransac_n: Number of point-pair correspondences used for alignment.
+            checkers: The correspondence checkers used to discard correspondences using low compute metrics.
+            similarity_threshold: Edge length similarity checker threshold.
+            normal_angle_threshold: Normal angle similarity checker threshold.
+            data_to_cache: Data to be cached. Refer to base class for details.
+            **kwargs: Optional additional keyword arguments used downstream.
+        """
         super().__init__(name="RANSAC", data_to_cache=data_to_cache, **kwargs)
 
         self.max_iteration = max_iteration
@@ -354,7 +452,20 @@ class RANSAC(RegistrationInterface):
             target_feature: Feature = None,
             draw: bool = False,
             **kwargs: Any) -> RegistrationResult:
+        """Runs the RANSAC algorithm between `source` and `target` point cloud.
 
+        The goal is to find the rotation and translation, i.e. 6D pose, of the `source` object, best resembling its
+        actual pose found in the `target` point cloud without any initial pose information. The result is commonly
+        refined by ICP.
+
+        Args:
+            source: The source data.
+            target: The target data.
+            source_feature: The FPFH feature of `source`. Computed based on default values if not provided.
+            target_feature: The FPFH feature of `target`. Computed based on default values if not provided.
+            draw: Visualize the registration result.
+            **kwargs: Optional additional keyword arguments. Allows to set thresholds and parameters for RANSAC.
+        """
         start = time.time()
         _source = self._eval_data(data_key_or_value=source, **kwargs)
         _target = self._eval_data(data_key_or_value=target, **kwargs)
@@ -371,7 +482,7 @@ class RANSAC(RegistrationInterface):
         estimation_method_kwargs = {}
         self.estimation_method = kwargs.get("estimation_method", self.estimation_method)
         if self.estimation_method == ICPTypes.COLOR:
-            raise ValueError(f"Estimation method {self.estimation_method} is not supported by RANSAC.")
+            raise ValueError(f"Estimation method {self.estimation_method} is not supported by Rnormal_angle_threshold: ANSAC.")
         elif self.estimation_method == ICPTypes.POINT:
             estimation_method_kwargs = {"with_scaling": kwargs.get("with_scaling", False)}
         elif self.estimation_method == ICPTypes.PLANE:
@@ -422,6 +533,7 @@ class RANSAC(RegistrationInterface):
         else:
             _target_feature = target_feature
 
+        # noinspection PyTypeChecker
         result = self.algorithm(source=_source,
                                 target=_target,
                                 source_feature=_source_feature,
