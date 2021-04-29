@@ -4,7 +4,6 @@ Classes:
     IterativeClosestPoint: The Iterative Closest Point (ICP) algorithm.
     FastGlobalRegistration: The Fast Global Registration (FGR) algorithm.
     RANSAC: The RANSAC algorithm.
-    ICPTypes: Supported ICP registration types.
     CheckerTypes: Supported RANSAC correspondence checker types.
     KernelTypes: Supported ICP Point-To-Plane robust kernel types.
 """
@@ -17,9 +16,10 @@ from typing import Any, Union, Tuple, List, Dict
 import numpy as np
 import open3d as o3d
 
-from .interfaces import RegistrationInterface
+from .interfaces import RegistrationInterface, ICPTypes
 from .utils import InputTypes, process_point_cloud
 
+PointCloud = o3d.geometry.PointCloud
 PointToPoint = o3d.pipelines.registration.TransformationEstimationPointToPoint
 PointToPlane = o3d.pipelines.registration.TransformationEstimationPointToPlane
 ColoredICP = o3d.pipelines.registration.TransformationEstimationForColoredICP
@@ -36,13 +36,6 @@ CorrespondenceChecker = o3d.pipelines.registration.CorrespondenceChecker
 ransac_feature = o3d.pipelines.registration.registration_ransac_based_on_feature_matching
 ransac_correspondence = o3d.pipelines.registration.registration_ransac_based_on_correspondence
 RegistrationResult = o3d.pipelines.registration.RegistrationResult
-
-
-class ICPTypes:
-    """Supported ICP registration types."""
-    POINT = PointToPoint
-    PLANE = PointToPlane
-    COLOR = ColoredICP
 
 
 class CheckerTypes:
@@ -89,6 +82,7 @@ class IterativeClosestPoint(RegistrationInterface):
         run(source, target, init, ...): Runs the *Iterative Closest Point* algorithm between `source` and `target` point
                                         cloud with initial pose.
     """
+
     def __init__(self,
                  relative_fitness: float = 1e-6,
                  relative_rmse: float = 1e-6,
@@ -98,8 +92,7 @@ class IterativeClosestPoint(RegistrationInterface):
                  with_scaling: bool = False,
                  kernel: KernelTypes = KernelTypes.NONE,
                  kernel_noise_std: float = 0.1,
-                 data_to_cache: Union[Dict[Any, InputTypes], None] = None,
-                 **kwargs: Any) -> None:
+                 data_to_cache: Union[Dict[Any, InputTypes], None] = None) -> None:
         """
         Args:
             relative_fitness: If relative change (difference) of fitness score is lower than `relative_fitness`,
@@ -113,9 +106,8 @@ class IterativeClosestPoint(RegistrationInterface):
             kernel: Use robust kernel in Point-to-Plane ICP to deal with noise.
             kernel_noise_std: The estimated/assumed noise standard deviation in the target data used in `kernel`.
             data_to_cache: Data to be cached. Refer to base class for details.
-            **kwargs: Optional additional keyword arguments used downstream.
         """
-        super().__init__(name="ICP", data_to_cache=data_to_cache, **kwargs)
+        super().__init__(name="ICP", data_to_cache=data_to_cache)
 
         self.relative_fitness = relative_fitness
         self.relative_rmse = relative_rmse
@@ -126,13 +118,16 @@ class IterativeClosestPoint(RegistrationInterface):
         self.estimation_method = estimation_method
         if self.estimation_method == ICPTypes.POINT:
             self._name = f"POINT_TO_POINT_{self._name}"
+            self._estimation_method = PointToPoint
         elif self.estimation_method == ICPTypes.PLANE:
             self._name = f"POINT_TO_PLANE_{self._name}"
+            self._estimation_method = PointToPlane
         elif self.estimation_method == ICPTypes.COLOR:
             self._name = f"COLORED_{self._name}"
+            self._estimation_method = ColoredICP
             self.algorithm = o3d.pipelines.registration.registration_colored_icp
         else:
-            raise ValueError(f"`estimation_method` must be one of `ICPTypes` but is {type(estimation_method)}.")
+            raise ValueError(f"`estimation_method` must be one of `ICPTypes` but is {self.estimation_method}.")
         self.with_scaling = with_scaling
         self.kernel = kernel
         self.kernel_noise_std = kernel_noise_std
@@ -140,6 +135,60 @@ class IterativeClosestPoint(RegistrationInterface):
         self.criteria = ICPConvergenceCriteria(relative_fitness=self.relative_fitness,
                                                relative_rmse=self.relative_rmse,
                                                max_iteration=self.max_iteration)
+
+    @staticmethod
+    def _crop_target_around_source(source: PointCloud,
+                                   target: PointCloud,
+                                   init: np.ndarray,
+                                   crop_scale: float = 1.0) -> PointCloud:
+        """Crops `target` point cloud around `source` point cloud.
+
+        Args:
+            source: The source point cloud.
+            target: The target point cloud.
+            init: The initial pose data for ICP as 4x4 transformation matrix.
+            crop_scale: The scale is applied to the source bounding box decrease/increase the cropped area.
+
+        Returns:
+            The cropped target point cloud.
+        """
+        bounding_box = copy.deepcopy(source).transform(init).get_axis_aligned_bounding_box()
+        bounding_box = bounding_box.scale(scale=crop_scale, center=bounding_box.get_center())
+        # noinspection PyArgumentList
+        cropped_target = copy.deepcopy(target).crop(bounding_box=bounding_box)
+        return cropped_target if not cropped_target.is_empty() else target
+
+    def _eval_kwargs(self, source: PointCloud, **kwargs: Any) -> None:
+        """Evaluates ICP keyword arguments.
+
+        Args:
+            source: The source point cloud used to automatically determine `maximum_correspondence_distance`
+        """
+        if any(key in kwargs for key in ["relative_fitness", "relative_rmse", "max_iteration"]):
+            self.criteria = ICPConvergenceCriteria(
+                relative_fitness=kwargs.get("relative_fitness", self.relative_fitness),
+                relative_rmse=kwargs.get("relative_rmse", self.relative_rmse),
+                max_iteration=kwargs.get("max_iteration", self.max_iteration))
+
+        self.max_correspondence_distance = kwargs.get("max_correspondence_distance", self.max_correspondence_distance)
+        if self.max_correspondence_distance == -1.0:
+            self.max_correspondence_distance = self._compute_dist(point_cloud=source)
+
+        self.estimation_method = kwargs.get("estimation_method", self.estimation_method)
+        if self.estimation_method == ICPTypes.COLOR:
+            self._estimation_method = ColoredICP()
+            self.algorithm = o3d.pipelines.registration.registration_colored_icp
+        elif self.estimation_method == ICPTypes.POINT:
+            self._estimation_method = PointToPoint(with_scaling=kwargs.get("with_scaling", self.with_scaling))
+        elif self.estimation_method == ICPTypes.PLANE:
+            kernel = kwargs.get("kernel", self.kernel)
+            if kernel != KernelTypes.NONE:
+                kernel = kernel(k=kwargs.get("kernel_noise_std", self.kernel_noise_std))
+                self._estimation_method = PointToPlane(kernel=kernel)
+            else:
+                self._estimation_method = PointToPlane()
+        else:
+            raise ValueError(f"`estimation_method` must be one of `ICPTypes` but is {self.estimation_method}.")
 
     def run(self,
             source: InputTypes,
@@ -163,7 +212,6 @@ class IterativeClosestPoint(RegistrationInterface):
             crop_scale: The scale of the `source` bounding box used for cropping `target`. Increase if `init` is
                         inaccurate.
             draw: Visualize the registration result.
-            **kwargs: Optional additional keyword arguments. Allows to set thresholds and parameters for ICP.
 
         Returns:
             The registration result containing relative fitness and RMSE as well as the the transformation between
@@ -171,51 +219,11 @@ class IterativeClosestPoint(RegistrationInterface):
         """
         start = time.time()
 
-        _init = np.eye(4)
-        init = np.asarray(init)
-        if init.size in [3, 4]:
-            _init[:3, 3] = init.ravel()[:3]
-        elif init.size == 9:
-            _init[:3, :3] = init.reshape(3, 3)
-        elif init.size == 16:
-            _init = init.reshape(4, 4)
-        else:
-            raise ValueError("`init` needs to be a valid translation, rotation or transformation in natural or"
-                             "homogeneous coordinates, i.e. of size 3, 4, 9 or 16.")
-
         _source = self._eval_data(data_key_or_value=source, **kwargs)
         _target = self._eval_data(data_key_or_value=target, **kwargs)
-
-        if any(key in kwargs for key in ["relative_fitness", "relative_rmse", "max_iteration"]):
-            self.criteria = ICPConvergenceCriteria(
-                relative_fitness=kwargs.get("relative_fitness", self.relative_fitness),
-                relative_rmse=kwargs.get("relative_rmse", self.relative_rmse),
-                max_iteration=kwargs.get("max_iteration", self.max_iteration))
-
-        self.max_correspondence_distance = kwargs.get("max_correspondence_distance", self.max_correspondence_distance)
-        if self.max_correspondence_distance == -1.0:
-            self.max_correspondence_distance = self._compute_dist(point_cloud=_source)
-
-        estimation_method_kwargs = {}
-        self.estimation_method = kwargs.get("estimation_method", self.estimation_method)
-        if self.estimation_method == ICPTypes.COLOR:
-            self.algorithm = o3d.pipelines.registration.registration_colored_icp
-        elif self.estimation_method == ICPTypes.POINT:
-            estimation_method_kwargs = {"with_scaling": kwargs.get("with_scaling", self.with_scaling)}
-        elif self.estimation_method == ICPTypes.PLANE:
-            kernel = kwargs.get("kernel", self.kernel)
-            if kernel != KernelTypes.NONE:
-                kernel = kernel(k=kwargs.get("kernel_noise_std", self.kernel_noise_std))
-                estimation_method_kwargs = {"kernel": kernel}
-        else:
-            raise ValueError(f"Estimation method must of type {type(ICPTypes())} but is {self.estimation_method}.")
-
+        _init = self._eval_init(init)
         if crop_target_around_source:
-            bounding_box = copy.deepcopy(_source).transform(init).get_axis_aligned_bounding_box()
-            bounding_box = bounding_box.scale(scale=crop_scale, center=bounding_box.get_center())
-            # noinspection PyArgumentList
-            cropped_target = copy.deepcopy(_target).crop(bounding_box=bounding_box)
-            _target = cropped_target if not cropped_target.is_empty() else _target
+            _target = self._crop_target_around_source(source=_source, target=_target, init=_init, crop_scale=crop_scale)
 
         if self.estimation_method in [ICPTypes.PLANE, ICPTypes.COLOR]:
             if not _source.has_normals():
@@ -237,12 +245,14 @@ class IterativeClosestPoint(RegistrationInterface):
                 # If cached before, replace with new version with estimated normals
                 self.replace_in_cache(data={target: _target})
 
+        self._eval_kwargs(source=_source, **kwargs)
+
         # noinspection PyTypeChecker
         result = self.algorithm(source=_source,
                                 target=_target,
                                 max_correspondence_distance=self.max_correspondence_distance,
                                 init=_init,
-                                estimation_method=self.estimation_method(**estimation_method_kwargs),
+                                estimation_method=self._estimation_method,
                                 criteria=self.criteria)
         logger.debug(f"{self._name} took {time.time() - start} seconds.")
         logger.debug(f"{self._name} result: fitness={result.fitness}, inlier_rmse={result.inlier_rmse}.")
@@ -270,19 +280,18 @@ class FastGlobalRegistration(RegistrationInterface):
         run(source, target, source_feature, target_feature, ...): Runs the FGR algorithm between `source` and `target`
                                                                   point cloud without any initial pose information.
     """
+
     def __init__(self,
                  max_iteration: int = 64,
                  max_correspondence_distance: float = 0.005,  # 5mm
-                 data_to_cache: Union[Dict[Any, InputTypes], None] = None,
-                 **kwargs: Any) -> None:
+                 data_to_cache: Union[Dict[Any, InputTypes], None] = None) -> None:
         """
         Args:
             max_iteration: Maximum number of iterations before the algorithm is stopped.
             max_correspondence_distance: Maximum correspondence points-pair distance.
             data_to_cache: Data to be cached. Refer to base class for details.
-            **kwargs: Optional additional keyword arguments used downstream.
         """
-        super().__init__(name="FGR", data_to_cache=data_to_cache, **kwargs)
+        super().__init__(name="FGR", data_to_cache=data_to_cache)
 
         self.max_correspondence_distance = max_correspondence_distance
         self.max_iteration = max_iteration
@@ -310,7 +319,6 @@ class FastGlobalRegistration(RegistrationInterface):
             source_feature: The FPFH feature of `source`. Computed based on default values if not provided.
             target_feature: The FPFH feature of `target`. Computed based on default values if not provided.
             draw: Visualize the registration result.
-            **kwargs: Optional additional keyword arguments. Allows to set thresholds and parameters for FGR.
         """
         start = time.time()
         _source = self._eval_data(data_key_or_value=source, **kwargs)
@@ -389,15 +397,18 @@ class RANSAC(RegistrationInterface):
     is commonly employed. Older, but well established alternative to FGR.
 
     Attributes:
+        algorithm: The type of RANSAC registration algorithm used in `run`.
         max_iteration: Maximum number of iterations before the algorithm is stopped.
         confidence: Threshold for algorithm convergence based on point-pair correspondence confidence.
         max_correspondence_distance: Maximum correspondence points-pair distance.
+        estimation_method: The estimation method used by RANSAC.
+        with_scaling: Use non-rigid transform in Point-to-Point estimation method to align source to target.
+        kernel: Use robust kernel in Point-to-Plane estimation method to deal with noise.
+        kernel_noise_std: The estimated/assumed noise standard deviation in the target data used in `kernel`.
+        ransac_n: Number of point-pair correspondences used for alignment.
+        checkers: The correspondence checkers used to discard correspondences using low compute metrics.
         similarity_threshold: Edge length similarity checker threshold.
         normal_angle_threshold: Normal angle similarity checker threshold.
-        ransac_n: Number of point-pair correspondences used for alignment.
-        algorithm: The type of FGR registration algorithm used in `run`.
-        estimation_method: The estimation method used by FGR.
-        checkers: The correspondence checkers used to discard correspondences using low compute metrics.
         criteria: RANSAC criteria object specifying algorithm convergence thresholds.
 
     Methods:
@@ -406,33 +417,38 @@ class RANSAC(RegistrationInterface):
                                                                   features without any initial pose information.
         _eval_checkers():
     """
+
     def __init__(self,
                  algorithm: Union[ransac_feature, ransac_correspondence] = ransac_feature,
                  max_iteration=100000,
                  confidence=0.999,
                  max_correspondence_distance: float = 0.015,  # 1.5cm
                  estimation_method: ICPTypes = ICPTypes.POINT,
+                 with_scaling: bool = False,
+                 kernel: KernelTypes = KernelTypes.NONE,
+                 kernel_noise_std: float = 0.1,
                  ransac_n: int = 3,
                  checkers: Tuple[CheckerTypes] = (CheckerTypes.EDGE, CheckerTypes.DISTANCE),
                  similarity_threshold: float = 0.9,
                  normal_angle_threshold: float = 0.52,  # ~30° in radians
-                 data_to_cache: Union[Dict[Any, InputTypes], None] = None,
-                 **kwargs: Any) -> None:
+                 data_to_cache: Union[Dict[Any, InputTypes], None] = None) -> None:
         """
         Args:
-            algorithm: The type of FGR registration algorithm used in `run`.
+            algorithm: The type of RANSAC registration algorithm used in `run`.
             max_iteration: Maximum number of iterations before the algorithm is stopped.
             confidence: Threshold for algorithm convergence based on point-pair correspondence confidence.
-            max_correspondence_distance:
             max_correspondence_distance: Maximum correspondence points-pair distance.
+            estimation_method: The estimation method used by RANSAC.
+            with_scaling: Use non-rigid transform in Point-to-Point estimation method to align source to target.
+            kernel: Use robust kernel in Point-to-Plane estimation method to deal with noise.
+            kernel_noise_std: The estimated/assumed noise standard deviation in the target data used in `kernel`.
             ransac_n: Number of point-pair correspondences used for alignment.
             checkers: The correspondence checkers used to discard correspondences using low compute metrics.
             similarity_threshold: Edge length similarity checker threshold.
             normal_angle_threshold: Normal angle similarity checker threshold.
             data_to_cache: Data to be cached. Refer to base class for details.
-            **kwargs: Optional additional keyword arguments used downstream.
         """
-        super().__init__(name="RANSAC", data_to_cache=data_to_cache, **kwargs)
+        super().__init__(name="RANSAC", data_to_cache=data_to_cache)
 
         self.max_iteration = max_iteration
         self.confidence = confidence
@@ -445,15 +461,21 @@ class RANSAC(RegistrationInterface):
         self.estimation_method = estimation_method
         if self.estimation_method == ICPTypes.COLOR:
             raise ValueError(f"Estimation method {self.estimation_method} is not supported by RANSAC.")
+        elif self.estimation_method == ICPTypes.POINT:
+            self._estimation_method = PointToPoint
+        elif self.estimation_method == ICPTypes.PLANE:
+            self._estimation_method = PointToPlane
+        else:
+            raise ValueError(f"`estimation_method` must be one of `ICPTypes` but is {type(estimation_method)}.")
+        self.with_scaling = with_scaling
+        self.kernel = kernel
+        self.kernel_noise_std = kernel_noise_std
 
         self.checkers = self._eval_checkers(checkers=checkers)
         self.criteria = RANSACConvergenceCriteria(max_iteration=self.max_iteration, confidence=self.confidence)
 
     def _eval_checkers(self, **kwargs: Any) -> Union[List[CorrespondenceChecker], List]:
         """Constructs point-pair correspondence checker list from given checker types list.
-
-        Args:
-            **kwargs: Checkers and optional additional keyword arguments passed to corresponding checkers.
 
         Returns:
             List of point-pair correspondence checkers used during RANSAC execution.
@@ -493,7 +515,6 @@ class RANSAC(RegistrationInterface):
             source_feature: The FPFH feature of `source`. Computed based on default values if not provided.
             target_feature: The FPFH feature of `target`. Computed based on default values if not provided.
             draw: Visualize the registration result.
-            **kwargs: Optional additional keyword arguments. Allows to set thresholds and parameters for RANSAC.
         """
         start = time.time()
         _source = self._eval_data(data_key_or_value=source, **kwargs)
@@ -508,19 +529,20 @@ class RANSAC(RegistrationInterface):
         if self.max_correspondence_distance == -1.0:
             self.max_correspondence_distance = self._compute_dist(point_cloud=_source)
 
-        estimation_method_kwargs = {}
         self.estimation_method = kwargs.get("estimation_method", self.estimation_method)
         if self.estimation_method == ICPTypes.COLOR:
-            raise ValueError(f"Estimation method {self.estimation_method} is not supported by Rnormal_angle_threshold: ANSAC.")
+            raise ValueError(f"Estimation method {self.estimation_method} is not supported by RANSAC.")
         elif self.estimation_method == ICPTypes.POINT:
-            estimation_method_kwargs = {"with_scaling": kwargs.get("with_scaling", False)}
+            self._estimation_method = PointToPoint(with_scaling=kwargs.get("with_scaling", self.with_scaling))
         elif self.estimation_method == ICPTypes.PLANE:
-            kernel = kwargs.get("kernel", KernelTypes.NONE)
+            kernel = kwargs.get("kernel", self.kernel)
             if kernel != KernelTypes.NONE:
-                kernel = kernel(k=kwargs.get("kernel_noise_std", 0.1))
-                estimation_method_kwargs = {"kernel": kernel}
+                kernel = kernel(k=kwargs.get("kernel_noise_std", self.kernel_noise_std))
+                self._estimation_method = PointToPlane(kernel=kernel)
+            else:
+                self._estimation_method = PointToPlane()
         else:
-            raise ValueError(f"Estimation method must of type {type(ICPTypes())} but is {self.estimation_method}.")
+            raise ValueError(f"`estimation_method` must be one of `ICPTypes` but is {self.estimation_method}.")
 
         if self.estimation_method == ICPTypes.PLANE or any(x is None for x in [source_feature, target_feature]):
             if not _source.has_normals():
@@ -569,7 +591,7 @@ class RANSAC(RegistrationInterface):
                                 target_feature=_target_feature,
                                 mutual_filter=kwargs.get("mutual_filter", True),
                                 max_correspondence_distance=self.max_correspondence_distance,
-                                estimation_method=self.estimation_method(**estimation_method_kwargs),
+                                estimation_method=self._estimation_method,
                                 ransac_n=kwargs.get("ransac_n", self.ransac_n),
                                 checkers=self._eval_checkers(**kwargs),
                                 criteria=self.criteria)

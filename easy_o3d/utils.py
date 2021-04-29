@@ -1,7 +1,6 @@
 """Utility functions used throughout the project.
 
 Classes:
-    ValueTypes: Default value flags to increase readability.
     SampleTypes: Supported types of point cloud sampling from meshes.
     DownsampleTypes: Supported point cloud downsampling types.
     SearchParamTypes: Supported normal and FPFH feature computation search parameter types.
@@ -59,11 +58,6 @@ CameraTypes = Union[np.ndarray, PinholeCameraIntrinsic, PinholeCameraIntrinsicPa
 logger = logging.getLogger(__name__)
 
 
-class ValueTypes(Flag):
-    """Default value flags to increase readability."""
-    DEFAULT = -1
-
-
 class SampleTypes(Flag):
     """Supported types of point cloud sampling from meshes."""
     UNIFORMLY = auto()
@@ -100,14 +94,16 @@ class OrientationTypes(Flag):
     DIRECTION = auto()
 
 
-def eval_data(data: InputTypes, **kwargs: Any) -> PointCloud:
+def eval_data(data: InputTypes,
+              number_of_points: Union[int, None] = None,
+              camera_intrinsic: Union[np.ndarray, list, None] = None,
+              **kwargs: Any) -> PointCloud:
     """Convenience function that automatically determines the data type and loads the data accordingly.
 
     Args:
         data: The data to be evaluated (read, transformed).
-        **kwargs: Optional additional keyword arguments. If `camera_intrinsic` is contained, loads from `Image` or
-                  `RGBDImage` depending on `data.shape`. If `number_of_points` is contained, loads and samples from
-                  `TriangleMesh`.
+        number_of_points: Number of points to sample from `data` if it is a triangle mesh.
+        camera_intrinsic: Camera intrinsic parameters used when converting depth or RGB-D images to point clouds.
 
     Returns:
         The data evaluated as a point cloud.
@@ -115,26 +111,36 @@ def eval_data(data: InputTypes, **kwargs: Any) -> PointCloud:
     if isinstance(data, PointCloud):
         logger.debug("Data is point cloud. Returning.")
         return data
-    elif isinstance(data, Image) and "camera_intrinsic" in kwargs:
+    elif isinstance(data, Image) and camera_intrinsic is not None:
         logger.debug("Trying to convert depth image to point cloud.")
-        return convert_depth_image_to_point_cloud(image_or_path=data, **kwargs)
-    elif isinstance(data, (RGBDImage, list)) and "camera_intrinsic" in kwargs:
+        return convert_depth_image_to_point_cloud(image_or_path=data,
+                                                  camera_intrinsic=camera_intrinsic,
+                                                  **kwargs)
+    elif isinstance(data, (RGBDImage, list)) and camera_intrinsic is not None:
         logger.debug("Trying to convert RGB-D image to point cloud.")
-        return convert_rgbd_image_to_point_cloud(rgbd_image_or_path=data, **kwargs)
-    elif isinstance(data, (str, TriangleMesh)) and "number_of_points" in kwargs:
+        return convert_rgbd_image_to_point_cloud(rgbd_image_or_path=data,
+                                                 camera_intrinsic=camera_intrinsic,
+                                                 **kwargs)
+    elif isinstance(data, (str, TriangleMesh)) and number_of_points is not None:
         logger.debug("Trying to sample point cloud from mesh.")
-        return sample_point_cloud_from_triangle_mesh(mesh_or_filename=data, **kwargs)
+        return sample_point_cloud_from_triangle_mesh(mesh_or_filename=data,
+                                                     number_of_points=number_of_points,
+                                                     **kwargs)
     elif isinstance(data, str):
         logger.debug(f"Trying to read point cloud data from file.")
-        return read_point_cloud(filename=data, **kwargs)
+        return read_point_cloud(filename=data)
     elif isinstance(data, np.ndarray):
-        if "camera_intrinsic" in kwargs:
+        if camera_intrinsic is not None:
             if len(data.shape) == 2:
                 logger.debug(f"Trying to convert depth data to point cloud ")
-                return convert_depth_image_to_point_cloud(image_or_path=data, **kwargs)
+                return convert_depth_image_to_point_cloud(image_or_path=data,
+                                                          camera_intrinsic=camera_intrinsic,
+                                                          **kwargs)
             elif data.shape[2] == 4:
                 logger.debug(f"Trying to convert RGB-D data to point cloud.")
-                return convert_rgbd_image_to_point_cloud(image_or_path=data, **kwargs)
+                return convert_rgbd_image_to_point_cloud(rgbd_image_or_path=data,
+                                                         camera_intrinsic=camera_intrinsic,
+                                                         **kwargs)
         elif data.shape[1] in [3, 6, 9]:
             logger.debug("Trying to convert data to point cloud.")
             return get_point_cloud_from_points(points=data)
@@ -142,7 +148,7 @@ def eval_data(data: InputTypes, **kwargs: Any) -> PointCloud:
             raise ValueError(
                 f"Point cloud data must be of shape Nx3 (xyz), Nx6 or Nx9 (rgb, normals) but is {data.shape}.")
     else:
-        raise TypeError(f"Can't process data of type {type(data)} with keyword arguments {kwargs}.")
+        raise TypeError(f"Can't process data of type {type(data)}.")
 
 
 def process_point_cloud(point_cloud: PointCloud,
@@ -210,6 +216,7 @@ def process_point_cloud(point_cloud: PointCloud,
             _point_cloud = _point_cloud.voxel_down_sample(voxel_size=downsample_factor)
         elif downsample == DownsampleTypes.RANDOM:
             raise NotImplementedError
+            # FIXME: Open3D `random_down_sample` is in docu but not in code.
             # _point_cloud = _point_cloud.random_down_sample(sampling_ratio=downsample_factor)
         elif downsample == DownsampleTypes.UNIFORM:
             _point_cloud = _point_cloud.uniform_down_sample(every_k_points=int(downsample_factor))
@@ -310,12 +317,15 @@ def read_point_cloud(filename: str, **kwargs: Any) -> PointCloud:
 
     Args:
         filename: The path to the triangle mesh file.
-        **kwargs: Optional additional keyword arguments.
 
     Returns:
         The point cloud data read from file.
     """
-    return o3d.io.read_point_cloud(filename=filename, **kwargs)
+    return o3d.io.read_point_cloud(filename=filename,
+                                   format=kwargs.get("format", 'auto'),
+                                   remove_nan_points=kwargs.get("remove_nan_points", True),
+                                   remove_infinite_points=kwargs.get("remove_infinite_points", True),
+                                   print_progress=kwargs.get("print_progress", False))
 
 
 def read_triangle_mesh(filename: str, **kwargs: Any) -> TriangleMesh:
@@ -323,12 +333,13 @@ def read_triangle_mesh(filename: str, **kwargs: Any) -> TriangleMesh:
 
     Args:
         filename: The path to the triangle mesh file.
-        **kwargs: Optional additional keyword arguments.
 
     Returns:
         The triangle mesh data read from file.
     """
-    return o3d.io.read_triangle_mesh(filename, **kwargs)
+    return o3d.io.read_triangle_mesh(filename=filename,
+                                     enable_post_processing=kwargs.get("enable_post_processing", False),
+                                     print_progress=kwargs.get("print_progress", False))
 
 
 def get_triangle_mesh_from_triangles_and_vertices(triangles: Union[np.ndarray, list],
@@ -357,9 +368,7 @@ def get_point_cloud_from_points(points: np.ndarray) -> PointCloud:
     Returns:
         The point cloud created from the points.
     """
-    point_cloud = PointCloud()
-    point_cloud.points = o3d.utility.Vector3dVector(points)
-    return point_cloud
+    return o3d.geometry.PointCloud(o3d.utility.Vector3dVector(points))
 
 
 def sample_point_cloud_from_triangle_mesh(mesh_or_filename: Union[TriangleMesh, str],
@@ -372,7 +381,6 @@ def sample_point_cloud_from_triangle_mesh(mesh_or_filename: Union[TriangleMesh, 
         mesh_or_filename: The triangle mesh from which the point cloud is sampled.
         number_of_points: Number of points to sample from the triangle mesh.
         sample_type: How to sample the points from the triangle mesh.
-        **kwargs: Optional additional keyword arguments.
 
     Returns:
         The point cloud obtained from the triangle mesh through sampling.
@@ -385,9 +393,15 @@ def sample_point_cloud_from_triangle_mesh(mesh_or_filename: Union[TriangleMesh, 
         raise TypeError(f"Can't read mesh of type {type(mesh_or_filename)}.")
 
     if sample_type == SampleTypes.UNIFORMLY:
-        return mesh.sample_points_uniformly(number_of_points=number_of_points, **kwargs)
+        return mesh.sample_points_uniformly(number_of_points=number_of_points,
+                                            use_triangle_normal=kwargs.get("use_triangle_normal", False),
+                                            seed=kwargs.get("seed", -1))
     elif sample_type == SampleTypes.POISSON_DISK:
-        return mesh.sample_points_poisson_disk(number_of_points=number_of_points, **kwargs)
+        return mesh.sample_points_poisson_disk(number_of_points=number_of_points,
+                                               init_factor=kwargs.get("init_factor", 5),
+                                               pcl=kwargs.get("pcl"),
+                                               use_triangle_normal=kwargs.get("use_triangle_normal", False),
+                                               seed=kwargs.get("seed", -1))
     else:
         raise ValueError(f"Sample style {sample_type} not supported.")
 
@@ -424,7 +438,6 @@ def get_rgbd_image(color: ImageTypes, depth: Union[ImageTypes, None] = None, **k
     Args:
         color: The RGB image data.
         depth: The depth image data. If `None`, `color` needs to be RGB-D, i.e. needs to contain a depth channel.
-        **kwargs: Optional additional keyword arguments.
 
     Returns:
         The RGB-D image object.
@@ -454,9 +467,19 @@ def get_rgbd_image(color: ImageTypes, depth: Union[ImageTypes, None] = None, **k
         assert len(_color.shape) == 4, "Color image must have depth channel if depth is not provided."
         _color = Image(_color[:, :, :3])
         _depth = Image(_color[:, :, 3])
-        return RGBDImage().create_from_color_and_depth(color=_color, depth=_depth, **kwargs)
+        return RGBDImage().create_from_color_and_depth(color=_color,
+                                                       depth=_depth,
+                                                       depth_scale=kwargs.get("depth_scale", 1000.0),
+                                                       depth_trunc=kwargs.get("depth_trunc", 3.0),
+                                                       convert_rgb_to_intensity=kwargs.get("convert_rgb_to_intensity",
+                                                                                           True))
     else:
-        return RGBDImage().create_from_color_and_depth(color=Image(_color), depth=Image(_depth), **kwargs)
+        return RGBDImage().create_from_color_and_depth(color=Image(_color),
+                                                       depth=Image(_depth),
+                                                       depth_scale=kwargs.get("depth_scale", 1000.0),
+                                                       depth_trunc=kwargs.get("depth_trunc", 3.0),
+                                                       convert_rgb_to_intensity=kwargs.get("convert_rgb_to_intensity",
+                                                                                           True))
 
 
 def eval_image_type(image_or_path: RGBDImageTypes, **kwargs: Any) -> Union[Image, RGBDImage]:
@@ -464,7 +487,6 @@ def eval_image_type(image_or_path: RGBDImageTypes, **kwargs: Any) -> Union[Image
 
     Args:
         image_or_path: The image data. Color and depth for RGB-D.
-        **kwargs: Optional additional keyword arguments.
 
     Returns:
         The evaluated image object.
@@ -528,7 +550,6 @@ def convert_depth_image_to_point_cloud(image_or_path: ImageTypes,
         camera_extrinsic: The camera extrinsic transformation matrix.
         depth_scale: The scale of the depth data.
         depth_trunc: The distance at which to truncate the depth when creating the point cloud.
-        **kwargs: Optional additional keyword arguments.
 
     Returns:
         The point cloud created from the depth image data.
@@ -563,7 +584,6 @@ def convert_rgbd_image_to_point_cloud(rgbd_image_or_path: RGBDImageTypes,
         camera_extrinsic: The camera extrinsic transformation matrix.
         depth_scale: The scale of the depth data.
         depth_trunc: The distance at which to truncate the depth when creating the point cloud.
-        **kwargs: Optional additional keyword arguments.
 
     Returns:
         The point cloud created from the RGB-D image data.
@@ -571,7 +591,7 @@ def convert_rgbd_image_to_point_cloud(rgbd_image_or_path: RGBDImageTypes,
     rgbd_image = eval_image_type(image_or_path=rgbd_image_or_path,
                                  depth_scale=depth_scale,
                                  depth_trunc=depth_trunc,
-                                 convert_rgb_to_intensity=kwargs.get("convert_rgb_to_intensity", False))
+                                 **kwargs)
     assert isinstance(rgbd_image, RGBDImage)
 
     intrinsic = eval_camera_intrinsic_type(image_or_path=rgbd_image, camera_intrinsic=camera_intrinsic)
@@ -677,7 +697,10 @@ def get_camera_parameters_from_blenderproc_bopwriter(scene_id: Union[int, str],
     return camera_parameters
 
 
-def draw_geometries(geometries: list, window_name: str = "Visualizer", size: Tuple[int, int] = (800, 600)) -> None:
+def draw_geometries(geometries: list,
+                    window_name: str = "Visualizer",
+                    size: Tuple[int] = (800, 600),
+                    **kwargs: Any) -> None:
     """Convenience function to draw 3D geometries.
 
     Args:
@@ -689,6 +712,6 @@ def draw_geometries(geometries: list, window_name: str = "Visualizer", size: Tup
                                       window_name=window_name,
                                       width=size[0],
                                       height=size[1],
-                                      point_show_normal=False,
-                                      mesh_show_wireframe=False,
-                                      mesh_show_back_face=False)
+                                      point_show_normal=kwargs.get("point_show_normal", False),
+                                      mesh_show_wireframe=kwargs.get("mesh_show_wireframe", False),
+                                      mesh_show_back_face=kwargs.get("mesh_show_back_face", False))
