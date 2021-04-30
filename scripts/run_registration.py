@@ -276,7 +276,7 @@ def main():
 
     # Run registration algorithms
     if initializer is not None:
-        logger.debug(f"Running initializer {initializer}.")
+        logger.debug(f"Running initializer {initializer._name}.")
         params = config["feature_processing"]
         results = initializer.run_many(source_list=source_list,
                                        target_list=target_list,
@@ -290,7 +290,7 @@ def main():
     else:
         init_list = None  # Todo: Add option to center source at target as initialization
     if refiner is not None:
-        logger.debug(f"Running refiner {refiner}.")
+        logger.debug(f"Running refiner {refiner._name}.")
         results = refiner.run_many(source_list=source_list,
                                    target_list=target_list,
                                    init_list=init_list,

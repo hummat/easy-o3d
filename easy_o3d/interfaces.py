@@ -11,6 +11,7 @@ import hashlib
 import logging
 from abc import ABC, abstractmethod
 from typing import Any, Union, Dict, Tuple, List
+import time
 from enum import Flag, auto
 from joblib import Parallel, delayed
 from multiprocessing import cpu_count
@@ -412,7 +413,7 @@ class RegistrationInterface(ABC):
             source_0 <-> target_0, source_1 <-> target_0, ... source_N <-> target_0, source_0 <-> target_1, ...
             If `one_vs_one`, the order is source_0 <-> target_0, source_1 <-> target_1, ...
         """
-
+        start = time.time()
         if multi_thread_preload and any(type(x) == str for x in source_list + target_list):
             source_target_list = self._eval_data_parallel(source_list + target_list)
             source_list, target_list = source_target_list[:len(source_list)], source_target_list[len(source_list):]
@@ -452,4 +453,5 @@ class RegistrationInterface(ABC):
                                                 target=target,
                                                 init=init,
                                                 **kwargs))
+        logger.debug(f"`run_many` took {time.time() - start} seconds.")
         return results

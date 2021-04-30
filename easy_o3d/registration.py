@@ -218,7 +218,6 @@ class IterativeClosestPoint(RegistrationInterface):
             `source` and `target`.
         """
         start = time.time()
-
         _source = self._eval_data(data_key_or_value=source, **kwargs)
         _target = self._eval_data(data_key_or_value=target, **kwargs)
         _init = self._eval_init(init)
