@@ -35,6 +35,8 @@ import json
 import logging
 import os
 import time
+from joblib import Parallel, delayed
+from multiprocessing import cpu_count
 from enum import Flag, auto
 from typing import Any, List, Union, Tuple
 
@@ -149,6 +151,28 @@ def eval_data(data: InputTypes,
                 f"Point cloud data must be of shape Nx3 (xyz), Nx6 or Nx9 (rgb, normals) but is {data.shape}.")
     else:
         raise TypeError(f"Can't process data of type {type(data)}.")
+
+
+def eval_data_parallel(data: List[InputTypes],
+                       number_of_points: Union[List[int], int, None] = None,
+                       camera_intrinsic: Union[np.ndarray, list, None] = None,
+                       num_threads: int = cpu_count(),
+                       **kwargs: Any) -> List[PointCloud]:
+    if isinstance(number_of_points, list):
+        assert len(number_of_points) == len(data)
+        is_list = True
+    else:
+        is_list = False
+    if len(data) == 1:
+        return [eval_data(data=data[0],
+                          number_of_points=number_of_points.pop() if is_list else number_of_points,
+                          camera_intrinsic=camera_intrinsic,
+                          **kwargs)]
+    parallel = Parallel(n_jobs=min(num_threads, len(data)), prefer="threads")
+    return parallel(delayed(eval_data)(data=d,
+                                       number_of_points=number_of_points.pop() if is_list else number_of_points,
+                                       camera_intrinsic=camera_intrinsic,
+                                       **kwargs) for d in data)
 
 
 def process_point_cloud(point_cloud: PointCloud,
@@ -310,6 +334,15 @@ def process_point_cloud(point_cloud: PointCloud,
         return _point_cloud, feature
     else:
         return _point_cloud
+
+
+def process_point_cloud_parallel(point_cloud_list: List[PointCloud],
+                                 num_threads: int = cpu_count(),
+                                 **kwargs: Any) -> List[PointCloud]:
+    if len(point_cloud_list) == 1:
+        return [process_point_cloud(point_cloud=point_cloud_list[0], **kwargs)]
+    parallel = Parallel(n_jobs=min(num_threads, len(point_cloud_list)), prefer="threads")
+    return parallel(delayed(process_point_cloud)(point_cloud=pcd, **kwargs) for pcd in point_cloud_list)
 
 
 def read_point_cloud(filename: str, **kwargs: Any) -> PointCloud:

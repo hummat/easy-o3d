@@ -139,7 +139,7 @@ def main():
     # Evaluate command line and config arguments
     start = time.time()
     parser = argparse.ArgumentParser(description="Performs point cloud registration.")
-    parser.add_argument("-c", "--config", default="registration.ini", type=str,
+    parser.add_argument("-c", "--config", default="scripts/registration.ini", type=str,
                         help="Path to registration config.file.")
     parser.add_argument("--verbose", action="store_true", help="Get verbose output during execution.")
     args = parser.parse_args()
@@ -222,59 +222,55 @@ def main():
     number_of_points = eval_number_of_points(params.get("number_of_points"))
     camera_intrinsic = params.get("camera_intrinsic")
     sample_type = eval_sample_type(params.get("sample_type"))
-    source_list = [utils.eval_data(data=source,
-                                   number_of_points=number_of_points.pop() if isinstance(number_of_points,
-                                                                                         list) else number_of_points,
-                                   camera_intrinsic=None if camera_intrinsic is None else eval(camera_intrinsic),
-                                   sample_type=sample_type) for source in source_data]
+    source_list = utils.eval_data_parallel(data=source_data,
+                                           number_of_points=number_of_points,
+                                           camera_intrinsic=None if camera_intrinsic is None else eval(camera_intrinsic),
+                                           sample_type=sample_type)
 
     logger.debug("Loading target data.")
     params = config["target_params"]
     number_of_points = eval_number_of_points(params.get("number_of_points"))
     camera_intrinsic = params.get("camera_intrinsic")
     sample_type = eval_sample_type(params.get("sample_type"))
-    target_list = [utils.eval_data(data=target,
-                                   number_of_points=number_of_points.pop() if isinstance(number_of_points,
-                                                                                         list) else number_of_points,
-                                   camera_intrinsic=None if camera_intrinsic is None else eval(camera_intrinsic),
-                                   sample_type=sample_type) for target in target_data]
+    target_list = utils.eval_data_parallel(data=target_data,
+                                           number_of_points=number_of_points,
+                                           camera_intrinsic=None if camera_intrinsic is None else eval(camera_intrinsic),
+                                           sample_type=sample_type)
 
     # Process source and target data
     logger.debug("Processing source data.")
     params = config["source_processing"]
-    for index, source in enumerate(source_list):
-        source_list[index] = utils.process_point_cloud(point_cloud=source,
-                                                       downsample=eval_downsample(params.get("downsample")),
-                                                       downsample_factor=params.getfloat("downsample_factor"),
-                                                       remove_outlier=eval_outlier(params.get("remove_outlier")),
-                                                       outlier_std_ratio=params.getfloat("outlier_std_ratio"),
-                                                       scale=params.getfloat("scale"),
-                                                       estimate_normals=params.getboolean("estimate_normals"),
-                                                       recalculate_normals=params.getboolean("recalculate_normals"),
-                                                       normalize_normals=params.getboolean("normalize_normals"),
-                                                       orient_normals=eval_orient_normals(params.get("orient_normals")),
-                                                       search_param=eval_search_param(params.get("search_param")),
-                                                       search_param_knn=params.getint("search_param_knn"),
-                                                       search_param_radius=params.getfloat("search_param_radius"),
-                                                       draw=params.getboolean("draw"))
+    source_list = utils.process_point_cloud_parallel(point_cloud_list=source_list,
+                                                     downsample=eval_downsample(params.get("downsample")),
+                                                     downsample_factor=params.getfloat("downsample_factor"),
+                                                     remove_outlier=eval_outlier(params.get("remove_outlier")),
+                                                     outlier_std_ratio=params.getfloat("outlier_std_ratio"),
+                                                     scale=params.getfloat("scale"),
+                                                     estimate_normals=params.getboolean("estimate_normals"),
+                                                     recalculate_normals=params.getboolean("recalculate_normals"),
+                                                     normalize_normals=params.getboolean("normalize_normals"),
+                                                     orient_normals=eval_orient_normals(params.get("orient_normals")),
+                                                     search_param=eval_search_param(params.get("search_param")),
+                                                     search_param_knn=params.getint("search_param_knn"),
+                                                     search_param_radius=params.getfloat("search_param_radius"),
+                                                     draw=params.getboolean("draw"))
 
     logger.debug("Processing target data.")
     params = config["target_processing"]
-    for index, target in enumerate(target_list):
-        target_list[index] = utils.process_point_cloud(point_cloud=target,
-                                                       downsample=eval_downsample(params.get("downsample")),
-                                                       downsample_factor=params.getfloat("downsample_factor"),
-                                                       remove_outlier=eval_outlier(params.get("remove_outlier")),
-                                                       outlier_std_ratio=params.getfloat("outlier_std_ratio"),
-                                                       scale=params.getfloat("scale"),
-                                                       estimate_normals=params.getboolean("estimate_normals"),
-                                                       recalculate_normals=params.getboolean("recalculate_normals"),
-                                                       normalize_normals=params.getboolean("normalize_normals"),
-                                                       orient_normals=eval_orient_normals(params.get("orient_normals")),
-                                                       search_param=eval_search_param(params.get("search_param")),
-                                                       search_param_knn=params.getint("search_param_knn"),
-                                                       search_param_radius=params.getfloat("search_param_radius"),
-                                                       draw=params.getboolean("draw"))
+    target_list = utils.process_point_cloud_parallel(point_cloud_list=target_list,
+                                                     downsample=eval_downsample(params.get("downsample")),
+                                                     downsample_factor=params.getfloat("downsample_factor"),
+                                                     remove_outlier=eval_outlier(params.get("remove_outlier")),
+                                                     outlier_std_ratio=params.getfloat("outlier_std_ratio"),
+                                                     scale=params.getfloat("scale"),
+                                                     estimate_normals=params.getboolean("estimate_normals"),
+                                                     recalculate_normals=params.getboolean("recalculate_normals"),
+                                                     normalize_normals=params.getboolean("normalize_normals"),
+                                                     orient_normals=eval_orient_normals(params.get("orient_normals")),
+                                                     search_param=eval_search_param(params.get("search_param")),
+                                                     search_param_knn=params.getint("search_param_knn"),
+                                                     search_param_radius=params.getfloat("search_param_radius"),
+                                                     draw=params.getboolean("draw"))
 
     # Todo: Allow loading of and evaluation on ground truth poses.
 
@@ -310,18 +306,19 @@ def main():
 
     names = list()
     if algorithms.getboolean("one_vs_one"):
+        for i in range(len(source_list)):
+            names.append(f"s{i} - t{i}")
+    else:
         for i in range(len(target_list)):
             for j in range(len(source_list)):
                 names.append(f"s{j} - t{i}")
-    else:
-        for i in range(len(source_list)):
-            names.append(f"s{i} - t{i}")
     table = tabulate.tabulate([(name,
                                 result.fitness,
                                 result.inlier_rmse,
                                 np.asarray(result.correspondence_set).size) for name, result in zip(names, results)],
                               headers=["source vs. target", "fitness", "inlier rmse", "#corresp."])
     print(table)
+    logger.info(f"Execution took {time.time() - start} seconds.")
 
 
 if __name__ == "__main__":

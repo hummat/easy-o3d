@@ -80,9 +80,16 @@ class RegistrationInterface(ABC):
             data_to_cache: The data to be cached.
         """
         self._name = name
+        self._parallel = None
         self._cached_data = dict()
         if data_to_cache is not None:
             self.add_to_cache(data=data_to_cache)
+
+    @property
+    def parallel(self, prefer="threads"):
+        if self._parallel is None:
+            self._parallel = Parallel(n_jobs=cpu_count(), prefer=prefer)
+        return self._parallel
 
     def _eval_data(self, data_key_or_value: InputTypes, **kwargs: Any) -> PointCloud:
         """Returns cached data if possible. Processes input to return point cloud otherwise.
@@ -106,6 +113,9 @@ class RegistrationInterface(ABC):
                          number_of_points=kwargs.get("number_of_points"),
                          camera_intrinsic=kwargs.get("camera_intrinsic"))
 
+    def _eval_data_parallel(self, data_keys_or_values: List[InputTypes], **kwargs: Any) -> List[PointCloud]:
+        return self.parallel(delayed(self._eval_data)(data_key_or_value=d, **kwargs) for d in data_keys_or_values)
+        
     @staticmethod
     def _compute_dist(point_cloud: PointCloud) -> float:
         """Returns maximum correspondence distance for registration based on `point_cloud` size.
@@ -404,24 +414,24 @@ class RegistrationInterface(ABC):
         """
 
         if multi_thread_preload and any(type(x) == str for x in source_list + target_list):
-            parallel = Parallel(n_jobs=min(cpu_count(), len(source_list) + len(target_list)), prefer="threads")
-            source_target_list = parallel(delayed(self._eval_data)(data_key_or_value=d, **kwargs) for d in source_list + target_list)
+            source_target_list = self._eval_data_parallel(source_list + target_list)
             source_list, target_list = source_target_list[:len(source_list)], source_target_list[len(source_list):]
 
         results = list()
         if one_vs_one and len(source_list) == len(target_list):
-            if init_list:
+            if init_list is not None:
                 assert len(init_list) == len(source_list)
             for source, target in zip(source_list, target_list):
+                init = self._eval_init(init_list.pop()) if init_list is not None else np.eye(4)
                 if multi_scale:
                     results.append(self.run_multi_scale(source=source,
                                                         target=target,
-                                                        init=init_list.pop() if init_list is not None else np.eye(4),
+                                                        init=init,
                                                         **kwargs))
                 else:
                     results.append(self.run(source=source,
                                             target=target,
-                                            init=init_list.pop() if init_list else np.eye(4),
+                                            init=init,
                                             **kwargs))
         else:
             if one_vs_one:
@@ -431,14 +441,15 @@ class RegistrationInterface(ABC):
                     f"Need to provide one initial pose for each source/target combination to be evaluated."
             for target in target_list:
                 for source in source_list:
+                    init = self._eval_init(init_list.pop()) if init_list is not None else np.eye(4)
                     if multi_scale:
                         results.append(self.run_multi_scale(source=source,
                                                             target=target,
-                                                            init=init_list.pop() if init_list is not None else np.eye(4),
+                                                            init=init,
                                                             **kwargs))
                     else:
                         results.append(self.run(source=source,
                                                 target=target,
-                                                init=init_list.pop() if init_list is not None else np.eye(4),
+                                                init=init,
                                                 **kwargs))
         return results
