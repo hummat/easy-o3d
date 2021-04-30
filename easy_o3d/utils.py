@@ -156,7 +156,7 @@ def process_point_cloud(point_cloud: PointCloud,
                         downsample_factor: Union[float, int] = 1,
                         remove_outlier: OutlierTypes = OutlierTypes.NONE,
                         outlier_std_ratio: float = 1.0,
-                        transform: np.ndarray = None,
+                        transform: [np.ndarray, list, None] = None,
                         scale: float = 1.0,
                         estimate_normals: bool = False,
                         recalculate_normals: bool = False,
@@ -167,7 +167,7 @@ def process_point_cloud(point_cloud: PointCloud,
                         search_param: SearchParamTypes = SearchParamTypes.HYBRID,
                         search_param_knn: int = 30,
                         search_param_radius: float = 0.02,  # 2cm
-                        camera_location_or_direction: np.ndarray = np.zeros(3),
+                        camera_location_or_direction: [np.ndarray, list] = np.zeros(3),
                         draw: bool = False) -> Union[PointCloud, Tuple[PointCloud, Feature]]:
     """Utility function to apply various processing steps on point cloud data.
 
@@ -287,7 +287,7 @@ def process_point_cloud(point_cloud: PointCloud,
         elif orient_normals == OrientationTypes.CAMERA:
             _point_cloud.orient_normals_towards_camera_location(camera_location=camera_location_or_direction)
         elif orient_normals == OrientationTypes.DIRECTION:
-            _point_cloud.orient_normals_to_align_with_direction(orientation_reference=camera_location_or_direction)
+            _point_cloud.orient_normals_to_align_with_direction(orientation_reference=np.asarray(camera_location_or_direction))
         else:
             raise ValueError(f"`orient_normals` needs to be one of `OrientationTypes` but is {type(orient_normals)}.")
 

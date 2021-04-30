@@ -27,6 +27,7 @@ ColoredICP = o3d.pipelines.registration.TransformationEstimationForColoredICP
 RegistrationResult = o3d.pipelines.registration.RegistrationResult
 TriangleMesh = o3d.geometry.TriangleMesh
 PointCloud = o3d.geometry.PointCloud
+Feature = o3d.pipelines.registration.Feature
 
 logger = logging.getLogger(__name__)
 

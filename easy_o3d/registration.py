@@ -17,7 +17,7 @@ import numpy as np
 import open3d as o3d
 
 from .interfaces import RegistrationInterface, ICPTypes
-from .utils import InputTypes, process_point_cloud
+from .utils import InputTypes, process_point_cloud, SearchParamTypes
 
 PointCloud = o3d.geometry.PointCloud
 PointToPoint = o3d.pipelines.registration.TransformationEstimationPointToPoint
@@ -227,21 +227,26 @@ class IterativeClosestPoint(RegistrationInterface):
 
         if self.estimation_method in [ICPTypes.PLANE, ICPTypes.COLOR]:
             if not _source.has_normals():
-                logger.warning(f"Source has no normals which are needed for {self.estimation_method}.")
-                logger.warning("Computing with (potentially suboptimal) default parameters: kNN=30, radius=0.02.")
+                if "search_param_knn" not in kwargs and "search_param_radius" not in kwargs:
+                    logger.warning(f"Source has no normals which are needed to compute FPFH features.")
+                    logger.warning("Computing with (potentially suboptimal) default parameters: kNN=30, radius=0.02.")
                 _source = process_point_cloud(point_cloud=_source,
                                               estimate_normals=True,
-                                              search_param_knn=30,
-                                              search_param_radius=0.02)
+                                              search_param=kwargs.get("search_param", SearchParamTypes.HYBRID),
+                                              search_param_knn=kwargs.get("search_param_knn", 30),
+                                              search_param_radius=kwargs.get("search_param_radius", 0.02))
                 # If cached before, replace with new version with estimated normals
                 self.replace_in_cache(data={source: _source})
+
             if not _target.has_normals():
-                logger.warning(f"Target has no normals which are needed for {self.estimation_method}.")
-                logger.warning("Computing with (potentially suboptimal) default parameters: kNN=30, radius=0.02.")
+                if "search_param_knn" not in kwargs and "search_param_radius" not in kwargs:
+                    logger.warning(f"Target has no normals which are needed to compute FPFH features.")
+                    logger.warning("Computing with (potentially suboptimal) default parameters: kNN=30, radius=0.02.")
                 _target = process_point_cloud(point_cloud=_target,
                                               estimate_normals=True,
-                                              search_param_knn=30,
-                                              search_param_radius=0.02)
+                                              search_param=kwargs.get("search_param", SearchParamTypes.HYBRID),
+                                              search_param_knn=kwargs.get("search_param_knn", 30),
+                                              search_param_radius=kwargs.get("search_param_radius", 0.02))
                 # If cached before, replace with new version with estimated normals
                 self.replace_in_cache(data={target: _target})
 
@@ -303,8 +308,8 @@ class FastGlobalRegistration(RegistrationInterface):
     def run(self,
             source: InputTypes,
             target: InputTypes,
-            source_feature: Feature = None,
-            target_feature: Feature = None,
+            source_feature: Union[Feature, None] = None,
+            target_feature: Union[Feature, None] = None,
             draw: bool = False,
             **kwargs: Any) -> RegistrationResult:
         """Runs the Fast Global Registration algorithm between `source` and `target` point cloud.
@@ -333,44 +338,52 @@ class FastGlobalRegistration(RegistrationInterface):
                                                        iteration_number=kwargs.get("max_iteration", self.max_iteration))
 
         if source_feature is None:
-            logger.warning("Source FPFH feature weren't provided.")
-            logger.warning("Computing with (potentially suboptimal) default parameters: kNN=100, radius=0.05.")
+            if "search_param_knn" not in kwargs and "search_param_radius" not in kwargs:
+                logger.warning("Source FPFH feature weren't provided.")
+                logger.warning("Computing with (potentially suboptimal) default parameters: kNN=100, radius=0.05.")
 
             if not _source.has_normals():
-                logger.warning(f"Source has no normals which are needed to compute FPFH features.")
-                logger.warning("Computing with (potentially suboptimal) default parameters: kNN=30, radius=0.02.")
+                if "search_param_knn" not in kwargs and "search_param_radius" not in kwargs:
+                    logger.warning(f"Source has no normals which are needed to compute FPFH features.")
+                    logger.warning("Computing with (potentially suboptimal) default parameters: kNN=30, radius=0.02.")
                 _source = process_point_cloud(point_cloud=_source,
                                               estimate_normals=True,
-                                              search_param_knn=30,
-                                              search_param_radius=0.02)
+                                              search_param=kwargs.get("search_param", SearchParamTypes.HYBRID),
+                                              search_param_knn=kwargs.get("search_param_knn", 30),
+                                              search_param_radius=kwargs.get("search_param_radius", 0.02))
                 # If cached before, replace with new version with estimated normals
                 self.replace_in_cache(data={source: _source})
 
             _, _source_feature = process_point_cloud(point_cloud=_source,
                                                      compute_feature=True,
-                                                     search_param_knn=100,
-                                                     search_param_radius=0.05)  # 5cm
+                                                     search_param=kwargs.get("search_param", SearchParamTypes.HYBRID),
+                                                     search_param_knn=kwargs.get("search_param_knn", 100),
+                                                     search_param_radius=kwargs.get("search_param_radius", 0.05))
         else:
             _source_feature = source_feature
 
         if target_feature is None:
-            logger.warning("Target FPFH feature weren't provided.")
-            logger.warning("Computing with (potentially suboptimal) default parameters: kNN=100, radius=0.05.")
+            if "search_param_knn" not in kwargs and "search_param_radius" not in kwargs:
+                logger.warning("Target FPFH feature weren't provided.")
+                logger.warning("Computing with (potentially suboptimal) default parameters: kNN=100, radius=0.05.")
 
             if not _target.has_normals():
-                logger.warning(f"Target has no normals which are needed to compute FPFH features.")
-                logger.warning("Computing with (potentially suboptimal) default parameters: kNN=30, radius=0.02.")
+                if "search_param_knn" not in kwargs and "search_param_radius" not in kwargs:
+                    logger.warning(f"Target has no normals which are needed to compute FPFH features.")
+                    logger.warning("Computing with (potentially suboptimal) default parameters: kNN=30, radius=0.02.")
                 _target = process_point_cloud(point_cloud=_target,
                                               estimate_normals=True,
-                                              search_param_knn=30,
-                                              search_param_radius=0.02)
+                                              search_param=kwargs.get("search_param", SearchParamTypes.HYBRID),
+                                              search_param_knn=kwargs.get("search_param_knn", 30),
+                                              search_param_radius=kwargs.get("search_params_radius", 0.02))
                 # If cached before, replace with new version with estimated normals
                 self.replace_in_cache(data={target: _target})
 
             _, _target_feature = process_point_cloud(point_cloud=_target,
                                                      compute_feature=True,
-                                                     search_param_knn=100,
-                                                     search_param_radius=0.05)  # 5cm
+                                                     search_param=kwargs.get("search_param", SearchParamTypes.HYBRID),
+                                                     search_param_knn=kwargs.get("search_param_knn", 100),
+                                                     search_param_radius=kwargs.get("search_param_radius", 0.05))
         else:
             _target_feature = target_feature
 
@@ -420,15 +433,15 @@ class RANSAC(RegistrationInterface):
 
     def __init__(self,
                  algorithm: Union[ransac_feature, ransac_correspondence] = ransac_feature,
-                 max_iteration=100000,
-                 confidence=0.999,
+                 max_iteration: int = 100000,
+                 confidence: float = 0.999,
                  max_correspondence_distance: float = 0.015,  # 1.5cm
                  estimation_method: ICPTypes = ICPTypes.POINT,
                  with_scaling: bool = False,
                  kernel: KernelTypes = KernelTypes.NONE,
                  kernel_noise_std: float = 0.1,
                  ransac_n: int = 3,
-                 checkers: Tuple[CheckerTypes] = (CheckerTypes.EDGE, CheckerTypes.DISTANCE),
+                 checkers: Union[List[CheckerTypes], Tuple[CheckerTypes]] = (CheckerTypes.EDGE, CheckerTypes.DISTANCE),
                  similarity_threshold: float = 0.9,
                  normal_angle_threshold: float = 0.52,  # ~30° in radians
                  data_to_cache: Union[Dict[Any, InputTypes], None] = None) -> None:
@@ -471,7 +484,8 @@ class RANSAC(RegistrationInterface):
         self.kernel = kernel
         self.kernel_noise_std = kernel_noise_std
 
-        self.checkers = self._eval_checkers(checkers=checkers)
+        self.checkers = checkers
+        self._checkers = self._eval_checkers(checkers=self.checkers)
         self.criteria = RANSACConvergenceCriteria(max_iteration=self.max_iteration, confidence=self.confidence)
 
     def _eval_checkers(self, **kwargs: Any) -> Union[List[CorrespondenceChecker], List]:
@@ -494,13 +508,13 @@ class RANSAC(RegistrationInterface):
                     checker_list.append(checker(
                         normal_angle_threshold=kwargs.get("normal_angle_threshold", self.normal_angle_threshold)))
             return checker_list
-        return self.checkers if self.checkers else list()
+        return self._checkers if self._checkers else list()
 
     def run(self,
             source: InputTypes,
             target: InputTypes,
-            source_feature: Feature = None,
-            target_feature: Feature = None,
+            source_feature: Union[Feature, None] = None,
+            target_feature: Union[Feature, None] = None,
             draw: bool = False,
             **kwargs: Any) -> RegistrationResult:
         """Runs the RANSAC algorithm between `source` and `target` point cloud.
@@ -528,6 +542,7 @@ class RANSAC(RegistrationInterface):
         self.max_correspondence_distance = kwargs.get("max_correspondence_distance", self.max_correspondence_distance)
         if self.max_correspondence_distance == -1.0:
             self.max_correspondence_distance = self._compute_dist(point_cloud=_source)
+            self._checkers = self._eval_checkers(checkers=self.checkers)
 
         self.estimation_method = kwargs.get("estimation_method", self.estimation_method)
         if self.estimation_method == ICPTypes.COLOR:
@@ -544,43 +559,53 @@ class RANSAC(RegistrationInterface):
         else:
             raise ValueError(f"`estimation_method` must be one of `ICPTypes` but is {self.estimation_method}.")
 
-        if self.estimation_method == ICPTypes.PLANE or any(x is None for x in [source_feature, target_feature]):
+        if source_feature is None:
+            if "search_param_knn" not in kwargs and "search_param_radius" not in kwargs:
+                logger.warning("Source FPFH feature weren't provided.")
+                logger.warning("Computing with (potentially suboptimal) default parameters: kNN=100, radius=0.05.")
+
             if not _source.has_normals():
-                logger.warning(f"Source has no normals which are needed for {self.estimation_method} and FPFH feature.")
-                logger.warning("Computing with (potentially suboptimal) default parameters: kNN=30, radius=0.02.")
+                if "search_param_knn" not in kwargs and "search_param_radius" not in kwargs:
+                    logger.warning(f"Source has no normals which are needed to compute FPFH features.")
+                    logger.warning("Computing with (potentially suboptimal) default parameters: kNN=30, radius=0.02.")
                 _source = process_point_cloud(point_cloud=_source,
                                               estimate_normals=True,
-                                              search_param_knn=30,
-                                              search_param_radius=0.02)
+                                              search_param=kwargs.get("search_param", SearchParamTypes.HYBRID),
+                                              search_param_knn=kwargs.get("search_param_knn", 30),
+                                              search_param_radius=kwargs.get("search_param_radius", 0.02))
                 # If cached before, replace with new version with estimated normals
                 self.replace_in_cache(data={source: _source})
-            if not _target.has_normals():
-                logger.warning(f"Target has no normals which are needed for {self.estimation_method} and FPFH feature.")
-                logger.warning("Computing with (potentially suboptimal) default parameters: kNN=30, radius=0.02.")
-                _target = process_point_cloud(point_cloud=_target,
-                                              estimate_normals=True,
-                                              search_param_knn=30,
-                                              search_param_radius=0.02)
-                # If cached before, replace with new version with estimated normals
-                self.replace_in_cache(data={target: _target})
 
-        if source_feature is None:
-            logger.warning("Source FPFH feature weren't provided.")
-            logger.warning("Computing with (potentially suboptimal) default parameters: kNN=100, radius=0.05.")
             _, _source_feature = process_point_cloud(point_cloud=_source,
                                                      compute_feature=True,
-                                                     search_param_knn=100,
-                                                     search_param_radius=0.05)  # 5cm
+                                                     search_param=kwargs.get("search_param", SearchParamTypes.HYBRID),
+                                                     search_param_knn=kwargs.get("search_param_knn", 100),
+                                                     search_param_radius=kwargs.get("search_param_radius", 0.05))
         else:
             _source_feature = source_feature
 
         if target_feature is None:
-            logger.warning("Target FPFH feature weren't provided.")
-            logger.warning("Computing with (potentially suboptimal) default parameters: kNN=100, radius=0.05.")
+            if "search_param_knn" not in kwargs and "search_param_radius" not in kwargs:
+                logger.warning("Target FPFH feature weren't provided.")
+                logger.warning("Computing with (potentially suboptimal) default parameters: kNN=100, radius=0.05.")
+
+            if not _target.has_normals():
+                if "search_param_knn" not in kwargs and "search_param_radius" not in kwargs:
+                    logger.warning(f"Target has no normals which are needed to compute FPFH features.")
+                    logger.warning("Computing with (potentially suboptimal) default parameters: kNN=30, radius=0.02.")
+                _target = process_point_cloud(point_cloud=_target,
+                                              estimate_normals=True,
+                                              search_param=kwargs.get("search_param", SearchParamTypes.HYBRID),
+                                              search_param_knn=kwargs.get("search_param_knn", 30),
+                                              search_param_radius=kwargs.get("search_params_radius", 0.02))
+                # If cached before, replace with new version with estimated normals
+                self.replace_in_cache(data={target: _target})
+
             _, _target_feature = process_point_cloud(point_cloud=_target,
                                                      compute_feature=True,
-                                                     search_param_knn=100,
-                                                     search_param_radius=0.05)  # 5cm
+                                                     search_param=kwargs.get("search_param", SearchParamTypes.HYBRID),
+                                                     search_param_knn=kwargs.get("search_param_knn", 100),
+                                                     search_param_radius=kwargs.get("search_param_radius", 0.05))
         else:
             _target_feature = target_feature
 
