@@ -39,6 +39,34 @@ def source_path():
 
 
 @pytest.fixture
+def ground_truth_path():
+    return "tests/test_data/ground_truth_pose.json"
+
+
+@pytest.fixture
+def blenderproc_bopwriter_ground_truth_path():
+    return "tests/test_data/bop_data/obj_of_interest/train_pbr/000000/scene_gt.json"
+
+
+@pytest.fixture
+def transformation_rotation_matrix():
+    return [[0.5099551677703857, 0.25742393732070923, -0.8207793831825256,
+             -0.8590373396873474, 0.10278679430484772, -0.5014877915382385,
+             -0.044729556888341904, 0.9608163237571716, 0.27355334162712097],
+            [239.34751892089844, 255.32371520996094, 1949.2823486328125]]
+
+
+@pytest.fixture
+def transformation_euler():
+    return [[10.0, 30.0, 50.0], [100.0, 20.0, 50.0]]
+
+
+@pytest.fixture
+def transformation_quaternion():
+    return [[0.925, 0.325, 0.125, -0.035], [0.083, 0.123, 0.567]]
+
+
+@pytest.fixture
 def mesh(source_path):
     return o3d.io.read_triangle_mesh(filename=source_path)
 
@@ -153,3 +181,84 @@ class TestProcessPointCloud:
         _point_cloud = utils.process_point_cloud(point_cloud=point_cloud_orig)
         assert isinstance(point_cloud, o3d.geometry.PointCloud)
         assert _point_cloud is not point_cloud_orig
+
+
+class TestEvalTransformationData:
+
+    def test_eval_transformation_data_with_transformation_list(self):
+        T = np.eye(4)
+        R = T[:4, :3].ravel().tolist()
+        t = T[:, 3].ravel().tolist()
+        T = utils.eval_transformation_data(transformation_data=R + t)
+        assert isinstance(T, np.ndarray)
+        assert T.shape == (4, 4)
+        assert np.all(T == np.eye(4))
+
+    def test_eval_transformation_data_with_identity_transformation(self):
+        T = utils.eval_transformation_data(transformation_data=np.eye(4))
+        assert isinstance(T, np.ndarray)
+        assert T.shape == (4, 4)
+        assert np.all(T == np.eye(4))
+
+    def test_eval_transformation_data_with_rotation_matrix(self, transformation_rotation_matrix):
+        T = utils.eval_transformation_data(transformation_data=transformation_rotation_matrix)
+        assert isinstance(T, np.ndarray)
+        assert T.shape == (4, 4)
+        assert all(T[3, :] == [0, 0, 0, 1])
+        assert all(T[:3, :3].ravel() == transformation_rotation_matrix[0])
+        assert all(T[:3, 3].ravel() == transformation_rotation_matrix[1])
+
+        R = transformation_rotation_matrix[0]
+        t = transformation_rotation_matrix[1]
+        T = utils.eval_transformation_data(transformation_data=R + t)
+        assert isinstance(T, np.ndarray)
+        assert T.shape == (4, 4)
+        assert all(T[3, :] == [0, 0, 0, 1])
+        assert all(T[:3, :3].ravel() == transformation_rotation_matrix[0])
+        assert all(T[:3, 3].ravel() == transformation_rotation_matrix[1])
+
+        R = transformation_rotation_matrix[0] + [0, 0, 0]
+        t = transformation_rotation_matrix[1] + [1]
+        T = np.hstack([np.asarray(R).reshape(4, 3), np.asarray(t).reshape(4, 1)])
+        T = utils.eval_transformation_data(transformation_data=T)
+        assert isinstance(T, np.ndarray)
+        assert T.shape == (4, 4)
+        assert all(T[3, :] == [0, 0, 0, 1])
+        assert all(T[:3, :3].ravel() == transformation_rotation_matrix[0])
+        assert all(T[:3, 3].ravel() == transformation_rotation_matrix[1])
+
+    def test_eval_transformation_data_with_euler_angles(self, transformation_euler):
+        T = utils.eval_transformation_data(transformation_data=transformation_euler)
+        assert isinstance(T, np.ndarray)
+        assert T.shape == (4, 4)
+        assert all(T[3, :].ravel() == [0, 0, 0, 1])
+        assert all(T[:3, 3].ravel() == transformation_euler[1])
+
+        R = transformation_euler[0]
+        t = transformation_euler[1]
+        T = utils.eval_transformation_data(transformation_data=R + t)
+        assert isinstance(T, np.ndarray)
+        assert T.shape == (4, 4)
+        assert all(T[3, :].ravel() == [0, 0, 0, 1])
+        assert all(T[:3, 3].ravel() == t)
+
+    def test_eval_transformation_data_with_quaternion(self, transformation_quaternion):
+        T = utils.eval_transformation_data(transformation_data=transformation_quaternion)
+        assert isinstance(T, np.ndarray)
+        assert T.shape == (4, 4)
+        assert all(T[3, :].ravel() == [0, 0, 0, 1])
+        assert all(T[:3, 3].ravel() == transformation_quaternion[1])
+
+        R = transformation_quaternion[0]
+        t = transformation_quaternion[1]
+        T = utils.eval_transformation_data(transformation_data=R + t)
+        assert isinstance(T, np.ndarray)
+        assert T.shape == (4, 4)
+        assert all(T[3, :].ravel() == [0, 0, 0, 1])
+        assert all(T[:3, 3].ravel() == t)
+
+    def test_eval_transform_data_with_json(self, ground_truth_path):
+        T = utils.eval_transformation_data(transformation_data=ground_truth_path)
+        assert isinstance(T, np.ndarray)
+        assert T.shape == (4, 4)
+        assert all(T[3, :].ravel() == [0, 0, 0, 1])

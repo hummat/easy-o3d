@@ -16,8 +16,8 @@ from typing import Any, Union, Tuple, List, Dict
 import numpy as np
 import open3d as o3d
 
-from .interfaces import RegistrationInterface, ICPTypes
-from .utils import InputTypes, process_point_cloud, SearchParamTypes
+from .interfaces import RegistrationInterface, ICPTypes, MyRegistrationResult
+from .utils import InputTypes, process_point_cloud, SearchParamTypes, eval_transformation_data
 
 PointCloud = o3d.geometry.PointCloud
 PointToPoint = o3d.pipelines.registration.TransformationEstimationPointToPoint
@@ -197,7 +197,7 @@ class IterativeClosestPoint(RegistrationInterface):
             crop_target_around_source: bool = False,
             crop_scale: float = 1.0,
             draw: bool = False,
-            **kwargs: Any) -> RegistrationResult:
+            **kwargs: Any) -> MyRegistrationResult:
         """Runs the *Iterative Closest Point* (ICP) algorithm between `source` and `target` point cloud.
 
         The goal is to find the rotation and translation, i.e. 6D pose, of the `source` object, best
@@ -218,9 +218,9 @@ class IterativeClosestPoint(RegistrationInterface):
             `source` and `target`.
         """
         start = time.time()
+        _init = eval_transformation_data(init)
         _source = self._eval_data(data_key_or_value=source, **kwargs)
         _target = self._eval_data(data_key_or_value=target, **kwargs)
-        _init = self._eval_init(init)
         if crop_target_around_source:
             _target = self._crop_target_around_source(source=_source, target=_target, init=_init, crop_scale=crop_scale)
 
@@ -258,13 +258,18 @@ class IterativeClosestPoint(RegistrationInterface):
                                 init=_init,
                                 estimation_method=self._estimation_method,
                                 criteria=self.criteria)
+
         logger.debug(f"{self._name} took {time.time() - start} seconds.")
         logger.debug(f"{self._name} result: fitness={result.fitness}, inlier_rmse={result.inlier_rmse}.")
 
         if draw:
             self.draw_registration_result(source=_source, target=_target, pose=result.transformation, **kwargs)
 
-        return result
+        return MyRegistrationResult(correspondence_set=result.correspondence_set,
+                                    fitness=result.fitness,
+                                    inlier_rmse=result.inlier_rmse,
+                                    transformation=result.transformation,
+                                    runtime=time.time() - start)
 
 
 class FastGlobalRegistration(RegistrationInterface):
@@ -307,10 +312,11 @@ class FastGlobalRegistration(RegistrationInterface):
     def run(self,
             source: InputTypes,
             target: InputTypes,
+            init: Union[np.ndarray, list] = np.eye(4),
             source_feature: Union[Feature, None] = None,
             target_feature: Union[Feature, None] = None,
             draw: bool = False,
-            **kwargs: Any) -> RegistrationResult:
+            **kwargs: Any) -> MyRegistrationResult:
         """Runs the Fast Global Registration algorithm between `source` and `target` point cloud.
 
         The goal is to find the rotation and translation, i.e. 6D pose, of the `source` object, best resembling its
@@ -320,12 +326,14 @@ class FastGlobalRegistration(RegistrationInterface):
         Args:
             source: The source data.
             target: The target data.
+            init: The initial pose of `source`. Can be translation, rotation or transformation.
             source_feature: The FPFH feature of `source`. Computed based on default values if not provided.
             target_feature: The FPFH feature of `target`. Computed based on default values if not provided.
             draw: Visualize the registration result.
         """
         start = time.time()
-        _source = self._eval_data(data_key_or_value=source, **kwargs)
+        _init = eval_transformation_data(init)
+        _source = self._eval_data(data_key_or_value=source, **kwargs).transform(_init)
         _target = self._eval_data(data_key_or_value=target, **kwargs)
 
         self.max_correspondence_distance = kwargs.get("max_correspondence_distance", self.max_correspondence_distance)
@@ -392,13 +400,18 @@ class FastGlobalRegistration(RegistrationInterface):
                                 source_feature=_source_feature,
                                 target_feature=_target_feature,
                                 option=self.option)
+
         logger.debug(f"{self._name} took {time.time() - start} seconds.")
         logger.debug(f"{self._name} result: fitness={result.fitness}, inlier_rmse={result.inlier_rmse}.")
 
         if draw:
             self.draw_registration_result(source=_source, target=_target, pose=result.transformation, **kwargs)
 
-        return result
+        return MyRegistrationResult(correspondence_set=result.correspondence_set,
+                                    fitness=result.fitness,
+                                    inlier_rmse=result.inlier_rmse,
+                                    transformation=result.transformation @ _init,
+                                    runtime=time.time() - start)
 
 
 class RANSAC(RegistrationInterface):
@@ -512,10 +525,11 @@ class RANSAC(RegistrationInterface):
     def run(self,
             source: InputTypes,
             target: InputTypes,
+            init: Union[np.ndarray, list] = np.eye(4),
             source_feature: Union[Feature, None] = None,
             target_feature: Union[Feature, None] = None,
             draw: bool = False,
-            **kwargs: Any) -> RegistrationResult:
+            **kwargs: Any) -> MyRegistrationResult:
         """Runs the RANSAC algorithm between `source` and `target` point cloud.
 
         The goal is to find the rotation and translation, i.e. 6D pose, of the `source` object, best resembling its
@@ -525,12 +539,14 @@ class RANSAC(RegistrationInterface):
         Args:
             source: The source data.
             target: The target data.
+            init: The initial pose of `source`. Can be translation, rotation or transformation.
             source_feature: The FPFH feature of `source`. Computed based on default values if not provided.
             target_feature: The FPFH feature of `target`. Computed based on default values if not provided.
             draw: Visualize the registration result.
         """
         start = time.time()
-        _source = self._eval_data(data_key_or_value=source, **kwargs)
+        _init = eval_transformation_data(transformation_data=init)
+        _source = self._eval_data(data_key_or_value=source, **kwargs).transform(_init)
         _target = self._eval_data(data_key_or_value=target, **kwargs)
 
         if any(key in kwargs for key in ["max_iteration", "confidence"]):
@@ -619,10 +635,15 @@ class RANSAC(RegistrationInterface):
                                 ransac_n=kwargs.get("ransac_n", self.ransac_n),
                                 checkers=self._eval_checkers(**kwargs),
                                 criteria=self.criteria)
+
         logger.debug(f"{self._name} took {time.time() - start} seconds.")
         logger.debug(f"{self._name} result: fitness={result.fitness}, inlier_rmse={result.inlier_rmse}.")
 
         if draw:
             self.draw_registration_result(source=_source, target=_target, pose=result.transformation, **kwargs)
 
-        return result
+        return MyRegistrationResult(correspondence_set=result.correspondence_set,
+                                    fitness=result.fitness,
+                                    inlier_rmse=result.inlier_rmse,
+                                    transformation=result.transformation @ _init,
+                                    runtime=time.time() - start)

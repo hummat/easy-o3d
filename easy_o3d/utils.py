@@ -38,7 +38,7 @@ import time
 from joblib import Parallel, delayed
 from multiprocessing import cpu_count
 from enum import Flag, auto
-from typing import Any, List, Union, Tuple
+from typing import Any, List, Union, Tuple, Dict
 
 import numpy as np
 import open3d as o3d
@@ -311,7 +311,8 @@ def process_point_cloud(point_cloud: PointCloud,
         elif orient_normals == OrientationTypes.CAMERA:
             _point_cloud.orient_normals_towards_camera_location(camera_location=camera_location_or_direction)
         elif orient_normals == OrientationTypes.DIRECTION:
-            _point_cloud.orient_normals_to_align_with_direction(orientation_reference=np.asarray(camera_location_or_direction))
+            _point_cloud.orient_normals_to_align_with_direction(
+                orientation_reference=np.asarray(camera_location_or_direction))
         else:
             raise ValueError(f"`orient_normals` needs to be one of `OrientationTypes` but is {type(orient_normals)}.")
 
@@ -339,10 +340,17 @@ def process_point_cloud(point_cloud: PointCloud,
 def process_point_cloud_parallel(point_cloud_list: List[PointCloud],
                                  num_threads: int = cpu_count(),
                                  **kwargs: Any) -> List[PointCloud]:
+    transform_list = kwargs.get("transform_list")
+    if transform_list is not None:
+        assert len(transform_list) == len(point_cloud_list), f"Number of point clouds and transformations must match."
+    else:
+        transform_list = [np.eye(4)] * len(point_cloud_list)
     if len(point_cloud_list) == 1:
         return [process_point_cloud(point_cloud=point_cloud_list[0], **kwargs)]
     parallel = Parallel(n_jobs=min(num_threads, len(point_cloud_list)), prefer="threads")
-    return parallel(delayed(process_point_cloud)(point_cloud=pcd, **kwargs) for pcd in point_cloud_list)
+    return parallel(delayed(process_point_cloud)(point_cloud=pcd,
+                                                 transformation=T,
+                                                 **kwargs) for pcd, T in zip(point_cloud_list, transform_list))
 
 
 def read_point_cloud(filename: str, **kwargs: Any) -> PointCloud:
@@ -445,16 +453,14 @@ def get_camera_intrinsic_from_array(image_or_path: ImageTypes,
 
     Args:
         image_or_path: An image data as produced by the camera.
-        camera_intrinsic: An array holding the camera intrinsic parameters.
+        camera_intrinsic: An array or list holding the camera intrinsic parameters: fx, fy, cx, cy and s.
 
     Returns:
         The camera intrinsic object.
     """
-    assert camera_intrinsic.size == 9, f"Camera intrinsic must be 9 values but is {camera_intrinsic.size}."
-    intrinsic = camera_intrinsic
-    if isinstance(intrinsic, list):
-        intrinsic = np.asarray(camera_intrinsic)
-    intrinsic = intrinsic.reshape(3, 3)
+    intrinsic = np.asarray(camera_intrinsic)
+    assert intrinsic.size in [6, 9], f"Camera intrinsic must be 6 or 9 values but is {intrinsic.size}."
+    intrinsic = intrinsic.reshape(3, 3) if intrinsic.size == 9 else intrinsic.reshape(2, 3)
     image = eval_image_type(image_or_path=image_or_path)
     if isinstance(image, RGBDImage):
         image = image.depth
@@ -636,6 +642,67 @@ def convert_rgbd_image_to_point_cloud(rgbd_image_or_path: RGBDImageTypes,
                                                project_valid_depth_only=kwargs.get("project_valid_depth_only", True))
 
 
+def eval_transformation_data(transformation_data: Union[np.ndarray, List[float], List[List[float]], str]) -> np.ndarray:
+    """Evaluates different types of transformation data to obtain a 4x4 transformation matrix.
+
+    Args:
+        transformation_data: Array or list(s) containing transformation (rotation, translation) data.
+
+    Returns:
+        A 4x4 transformation matrix.
+    """
+    if isinstance(transformation_data, str):
+        data = transformation_data if os.path.exists(transformation_data) else eval(transformation_data)
+    else:
+        data = transformation_data
+
+    if isinstance(data, np.ndarray):
+        if data.size == 16:
+            return data.reshape(4, 4)
+        elif data.size in [3, 4]:
+            T = np.eye(4)
+            T[:3, 3] = data.ravel()[:3]
+            return T
+        elif data.size == 9:
+            T = np.eye(4)
+            T[:3, :3] = data.reshape(3, 3)
+        else:
+            raise ValueError(f"Transformation data needs 3, 4, 9 or 16 values but has {data.size}.")
+    elif isinstance(data, list):
+        if len(data) == 2:
+            if len(data[0]) == 3 and len(data[1]) >= 3:
+                return get_transformation_matrix_from_xyz(rotation_xyz=data[0], translation_xyz=data[1])
+            elif len(data[0]) == 4 and len(data[1]) >= 3:
+                return get_transformation_matrix_from_quaternion(rotation_wxyz=data[0], translation_xyz=data[1])
+            elif len(data[0]) == 9 and len(data[1]) >= 3:
+                T = np.eye(4)
+                T[:3, :3] = np.asarray(data[0]).reshape(3, 3)
+                T[:3, 3] = np.asarray(data[1]).ravel()[:3]
+                return T
+            else:
+                raise ValueError(f"Transformation needs 3, 4 or 9 rotation values and 3 or 4 translation values.")
+        elif len(data) in [3, 4]:
+            T = np.eye(4)
+            T[:3, 3] = np.asarray(data).ravel()[:3]
+            return T
+        elif len(data) == 6:
+            return get_transformation_matrix_from_xyz(rotation_xyz=data[:3], translation_xyz=data[3:])
+        elif len(data) == 7:
+            return get_transformation_matrix_from_quaternion(rotation_wxyz=data[:4], translation_xyz=data[4:])
+        elif len(data) == 9:
+            T = np.eye(4)
+            T[:3, :3] = np.asarray(data).reshape(3, 3)
+        elif len(data) in [12, 16]:
+            T = np.eye(4)
+            T[:3, :3] = np.asarray(data[:9]).reshape(3, 3)
+            T[:3, 3] = np.asarray(data[9:12])
+            return T
+    elif isinstance(data, str):
+        return get_ground_truth_pose_from_file(path_to_ground_truth_json=data)
+    else:
+        raise TypeError(f"Transformation data of unsupported type {type(data)}.")
+
+
 def get_transformation_matrix_from_xyz(rotation_xyz: Union[np.array, list] = np.zeros(3),
                                        translation_xyz: Union[np.array, list] = np.zeros(3)) -> np.ndarray:
     """Constructs a 4x4 homogenous transformation matrix from a XYZ translation vector and XYZ Euler angles.
@@ -678,6 +745,76 @@ def get_transformation_matrix_from_quaternion(rotation_wxyz: Union[np.array, lis
     T[:3, 3] = t
 
     return T
+
+
+def get_ground_truth_pose_from_file(path_to_ground_truth_json: str) -> np.ndarray:
+    """Reads ground truth from JSON file. Must contain keys starting with 'rot' (rotation) and 'tra' (translation).
+
+    Args:
+        path_to_ground_truth_json: Path to the ground truth JSON file.
+
+    Returns:
+        The ground truth pose as 4x4 transformation matrix.
+    """
+    with open(path_to_ground_truth_json) as f:
+        ground_truth = json.load(f)
+
+    assert any(key.startswith("rot") for key in ground_truth) and any(key.startswith("tra") for key in ground_truth), \
+        f"No key starting with 'rot' and/or 'tra' found in ground truth data."
+    for key, value in ground_truth.items():
+        if key.startswith("rot"):
+            R = np.asarray(value)
+        elif key.startswith("tra"):
+            t = np.asarray(value)
+
+    if R.size == 3:
+        T = get_transformation_matrix_from_xyz(rotation_xyz=R, translation_xyz=t)
+    elif R.size == 4:
+        T = get_transformation_matrix_from_quaternion(rotation_wxyz=R, translation_xyz=t)
+    elif R.size == 6:
+        T = np.eye(4)
+        T[:3, :3] = R.reshape(3, 3)
+        T[:3, 3] = t.ravel()[:3]
+    else:
+        raise ValueError(f"Rotation must have size 3, 4 or 6 but is {R.size}.")
+
+    return T
+
+
+def get_ground_truth_pose_from_blenderproc_bopwriter(path_to_scene_gt_json: str,
+                                                     scene_id: Union[int, str, List[int], List[str]] = -1,
+                                                     object_id: Union[int, str, List[int], List[str]] = -1) -> Dict[int, Dict[int, List[np.ndarray]]]:
+    """Reads ground truth poses from BlenderProc BopWriter data.
+
+    Args:
+        path_to_scene_gt_json: The path to the `scene_gt.json` file.
+        scene_id: The ID(s) of the rendered scene(s). Returns all scenes if set to -1.
+        object_id: The ID(s) of the object(s) in the scene(s). Returns poses of all object if set to -1.
+
+    Returns:
+        The ground truth pose of each object with `scene_id` in the scene with `scene_id`.
+    """
+    with open(path_to_scene_gt_json) as f:
+        ground_truth = json.load(f)
+
+    scene_id = [int(sid) for sid in scene_id] if isinstance(scene_id, list) else [int(scene_id)]
+    object_id = [int(oid) for oid in object_id] if isinstance(object_id, list) else [int(object_id)]
+    gt_dict = dict()
+    for key, value in ground_truth:
+        if int(key) in scene_id or scene_id[0] == -1:
+            scene_dict = dict()
+            for gt in value:
+                if int(gt["obj_id"]) in object_id or object_id[0] == -1:
+                    T = np.eye(4)
+                    T[:3, :3] = np.asarray(gt["cam_R_m2c"]).reshape(3, 3)
+                    T[:3, 3] = np.asarray(gt["cam_t_m2c"]) / 1000.0
+                    if int(gt["obj_id"]) in scene_dict:
+                        scene_dict[int(gt["obj_id"])].append(T)
+                    else:
+                        scene_dict[int(gt["obj_id"])] = [T]
+            if scene_dict:
+                gt_dict[int(key)] = scene_dict
+    return gt_dict
 
 
 def get_camera_parameters_from_blenderproc_bopwriter(scene_id: Union[int, str],
@@ -730,16 +867,16 @@ def get_camera_parameters_from_blenderproc_bopwriter(scene_id: Union[int, str],
     return camera_parameters
 
 
-def draw_geometries(geometries: list,
+def draw_geometries(geometries: List[o3d.geometry.Geometry],
                     window_name: str = "Visualizer",
                     size: Tuple[int] = (800, 600),
                     **kwargs: Any) -> None:
     """Convenience function to draw 3D geometries.
 
     Args:
-        geometries: A list of 3D geometry objects.
+        geometries: A list of Open3D geometry objects.
         window_name: The name of the visualization window.
-        size: The size of the visualization window.
+        size: The width and height of the visualization window.
     """
     o3d.visualization.draw_geometries(geometries,
                                       window_name=window_name,

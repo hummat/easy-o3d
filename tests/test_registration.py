@@ -1,6 +1,6 @@
 """Integration tests for Easy Open3D."""
 
-import json
+import os
 import numpy as np
 import pytest
 
@@ -40,11 +40,8 @@ def feature(global_data):
 
 @pytest.fixture
 def ground_truth():
-    with open("tests/test_data/ground_truth_pose.json") as f:
-        gt_pose_data = json.load(f)
-    rotation = gt_pose_data["rotation_quaternion"]
-    translation = gt_pose_data["translation_xyz"]
-    return utils.get_transformation_matrix_from_quaternion(rotation_wxyz=rotation, translation_xyz=translation)
+    path = os.path.join(os.getcwd(), "tests/test_data/ground_truth_pose.json")
+    return utils.eval_transformation_data(transformation_data=path)
 
 
 class TestIterativeClosestPoint:

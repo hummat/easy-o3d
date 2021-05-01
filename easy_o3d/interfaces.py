@@ -20,7 +20,7 @@ import numpy as np
 import open3d as o3d
 
 from .utils import (InputTypes, DownsampleTypes, SearchParamTypes, OrientationTypes, eval_data, draw_geometries,
-                    process_point_cloud)
+                    process_point_cloud, eval_transformation_data)
 
 PointToPoint = o3d.pipelines.registration.TransformationEstimationPointToPoint
 PointToPlane = o3d.pipelines.registration.TransformationEstimationPointToPlane
@@ -41,17 +41,18 @@ class ICPTypes(Flag):
 
 
 class MyRegistrationResult:
-    """Helper class mimicking Open3D's `RegistrationResult` but mutable."""
-
+    """Helper class mimicking Open3D's `RegistrationResult` but mutable and with added runtime."""
     def __init__(self,
                  correspondence_set: np.ndarray,
                  fitness: float,
                  inlier_rmse: float,
-                 transformation: np.ndarray):
+                 transformation: np.ndarray,
+                 runtime: float):
         self.correspondence_set = correspondence_set
         self.fitness = fitness
         self.inlier_rmse = inlier_rmse
         self.transformation = transformation
+        self.runtime = runtime
 
 
 class RegistrationInterface(ABC):
@@ -243,39 +244,18 @@ class RegistrationInterface(ABC):
 
         draw_geometries(geometries=to_draw, window_name=f"{self._name} Registration Result", **kwargs)
 
-    @staticmethod
-    def _eval_init(init: Union[np.ndarray, list]) -> np.ndarray:
-        """Evaluates initial pose data to parse translation, rotation and transformation.
-
-        Args:
-            init: The initial pose.
-
-        Returns:
-            The evaluated initial pose data as a 4x4 transformation matrix.
-        """
-        _init = np.eye(4)
-        init = np.asarray(init)
-        if init.size in [3, 4]:
-            _init[:3, 3] = init.ravel()[:3]
-        elif init.size == 9:
-            _init[:3, :3] = init.reshape(3, 3)
-        elif init.size == 16:
-            _init = init.reshape(4, 4)
-        else:
-            raise ValueError("`init` needs to be a valid translation, rotation or transformation in natural or"
-                             "homogeneous coordinates, i.e. of size 3, 4, 9 or 16.")
-        return _init
-
     @abstractmethod
     def run(self,
             source: InputTypes,
             target: InputTypes,
-            **kwargs: Any) -> RegistrationResult:
+            init: Union[np.ndarray, list] = np.eye(4),
+            **kwargs: Any) -> MyRegistrationResult:
         """Runs the registration algorithm of the derived class.
 
         Args:
             source: The source data.
             target: The target data.
+            init: The initial pose of `source`. Can be translation, rotation or transformation.
 
         Raises:
             NotImplementedError: A derived class should implement this method.
@@ -283,7 +263,7 @@ class RegistrationInterface(ABC):
         Returns:
             The registration result containing relative fitness (`fitness`) and RMSE (`relative_rmse`) as well as the
             correspondence set between `source` and `target` (`correspondence_set`) and transformation
-            (`transformation`) between `source` and `target`.
+            (`transformation`) between `source` and `target` and runtime (`runtime`).
         """
         raise NotImplementedError("A derived class should implement this method.")
 
@@ -316,6 +296,7 @@ class RegistrationInterface(ABC):
             correspondence set between `source` and `target` (`correspondence_set`) and transformation
             (`transformation`) between `source` and `target`.
         """
+        start = time.time()
         if target_scales is None:
             target_scales = source_scales
         assert len(source_scales) == len(iterations) == len(target_scales), \
@@ -325,7 +306,7 @@ class RegistrationInterface(ABC):
         _target = self._eval_data(data_key_or_value=target, **kwargs)
 
         current_result = None
-        current_transformation = self._eval_init(init)
+        current_transformation = init
         for i, (source_scale, target_scale, iteration) in enumerate(zip(source_scales, target_scales, iterations)):
             source_radius = radius_multiplier[0] * kwargs.get("search_param_radius", source_scale)
             target_radius = radius_multiplier[0] * kwargs.get("search_param_radius", target_scale)
@@ -357,18 +338,16 @@ class RegistrationInterface(ABC):
                                           init=current_transformation,
                                           max_iteration=iteration,
                                           **kwargs)
-                current_transformation = current_result.transformation
             else:
-                source_down = source_down.transform(current_transformation)
                 source_radius = radius_multiplier[1] * kwargs.get("search_param_radius", source_scale)
                 target_radius = radius_multiplier[1] * kwargs.get("search_param_radius", target_scale)
 
-                _, source_feature = process_point_cloud(point_cloud=source_down,
-                                                        compute_feature=True,
-                                                        search_param=kwargs.get("search_param",
-                                                                                SearchParamTypes.HYBRID),
-                                                        search_param_radius=source_radius,
-                                                        search_param_knn=kwargs.get("search_param_knn", 100))
+                source_down, source_feature = process_point_cloud(point_cloud=source_down,
+                                                                  compute_feature=True,
+                                                                  search_param=kwargs.get("search_param",
+                                                                                          SearchParamTypes.HYBRID),
+                                                                  search_param_radius=source_radius,
+                                                                  search_param_knn=kwargs.get("search_param_knn", 100))
 
                 _, target_feature = process_point_cloud(point_cloud=target_down,
                                                         compute_feature=True,
@@ -379,16 +358,15 @@ class RegistrationInterface(ABC):
 
                 current_result = self.run(source=source_down,
                                           target=target_down,
+                                          init=current_transformation,
                                           max_correspondence_distance=source_radius,
                                           source_feature=source_feature,
                                           target_feature=target_feature,
                                           max_iteration=iteration,
                                           **kwargs)
-                current_transformation = current_result.transformation @ current_transformation
-        return MyRegistrationResult(correspondence_set=current_result.correspondence_set,
-                                    fitness=current_result.fitness,
-                                    inlier_rmse=current_result.inlier_rmse,
-                                    transformation=current_transformation)
+            current_transformation = current_result.transformation
+            current_result.runtime = time.time() - start
+        return current_result
 
     def run_many(self,
                  source_list: List[InputTypes],
@@ -423,7 +401,7 @@ class RegistrationInterface(ABC):
             if init_list is not None:
                 assert len(init_list) == len(source_list)
             for source, target in zip(source_list, target_list):
-                init = self._eval_init(init_list.pop()) if init_list is not None else np.eye(4)
+                init = (init_list.pop()) if init_list is not None else np.eye(4)
                 if multi_scale:
                     results.append(self.run_multi_scale(source=source,
                                                         target=target,
@@ -442,7 +420,10 @@ class RegistrationInterface(ABC):
                     f"Need to provide one initial pose for each source/target combination to be evaluated."
             for target in target_list:
                 for source in source_list:
-                    init = self._eval_init(init_list.pop()) if init_list is not None else np.eye(4)
+                    if init_list and init_list is not None:
+                        init = init_list.pop()
+                    else:
+                        init = np.eye(4)
                     if multi_scale:
                         results.append(self.run_multi_scale(source=source,
                                                             target=target,

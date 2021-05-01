@@ -2,6 +2,7 @@
 """Performs point cloud registration using registration algorithms from this package."""
 
 from easy_o3d import utils, registration, set_logger_level
+import os
 import numpy as np
 import argparse
 import configparser
@@ -115,7 +116,7 @@ def eval_orient_normals(orient_normals: Union[str, None]) -> utils.OrientationTy
 
 
 def eval_sample_type(sample_type: str) -> utils.SampleTypes:
-    if sample_type.lower() in ["uniform", "uniformly"]:
+    if sample_type.lower() in ["uniform", "uniformly", "none"]:
         return utils.SampleTypes.UNIFORMLY
     elif sample_type.lower() in ["poisson", "disk", "poissondisk", "poisson_disk"]:
         return utils.SampleTypes.POISSON_DISK
@@ -124,7 +125,7 @@ def eval_sample_type(sample_type: str) -> utils.SampleTypes:
 
 
 def eval_search_param(search_param: str) -> utils.SearchParamTypes:
-    if search_param.lower() == "hybrid":
+    if search_param.lower() in ["hybrid", "none"]:
         return utils.SearchParamTypes.HYBRID
     elif search_param.lower() in ["knn", "nn", "nearestneighbor", "knearestneighbor", "nearest_neighbor",
                                   "k_nearest_neighbor"]:
@@ -133,6 +134,33 @@ def eval_search_param(search_param: str) -> utils.SearchParamTypes:
         return utils.SearchParamTypes.RADIUS
     else:
         raise ValueError(f"`search_param` must be one of 'hybrid', 'knn' or 'radius' but is {search_param}.")
+
+
+def eval_init_poses_or_ground_truth(init_poses: Union[str, None]) -> Union[List[np.ndarray], None]:
+    if init_poses is None:
+        return None
+    try:
+        poses = eval(init_poses)
+        if isinstance(poses[0], list):
+            if len(poses[0]) in [3, 4, 9]:
+                return [utils.eval_transformation_data(transformation_data=poses)]
+            else:
+                return [utils.eval_transformation_data(transformation_data=pose) for pose in poses]
+        else:
+            return [utils.eval_transformation_data(transformation_data=pose) for pose in poses]
+    except NameError:
+        if os.path.exists(init_poses):
+            if "scene_gt.json" in init_poses:
+                poses = utils.get_ground_truth_pose_from_blenderproc_bopwriter(path_to_scene_gt_json=init_poses)
+                poses = [list(pose.values()) for pose in list(poses.values())]
+                poses = [pose for sublist in poses for pose in sublist]
+                return [pose for sublist in poses for pose in sublist]
+            else:
+                return [utils.eval_transformation_data(transformation_data=init_poses)]
+        elif init_poses.lower() == "none":
+            return None
+        else:
+            return [utils.eval_transformation_data(transformation_data=pose) for pose in glob.glob(init_poses)]
 
 
 def main():
@@ -209,32 +237,38 @@ def main():
 
     # Evaluate source and target data config
     logger.debug("Evaluating data.")
-    source_data = eval(data.get("source_files"))
-    if isinstance(source_data, str):
-        source_data = glob.glob(source_data)
-    target_data = eval(data.get("target_files"))
-    if isinstance(target_data, str):
-        target_data = glob.glob(target_data)
+    source_data = data.get("source_files")
+    target_data = data.get("target_files")
+    try:
+        source_data = eval(source_data)
+    except NameError:
+        source_data = [source_data] if os.path.exists(source_data) else sorted(glob.glob(source_data))
+    try:
+        target_data = eval(data.get("target_files"))
+    except NameError:
+        target_data = [target_data] if os.path.exists(target_data) else sorted(glob.glob(target_data))
 
     # Load source and target data
     logger.debug("Loading source data.")
     params = config["source_params"]
     number_of_points = eval_number_of_points(params.get("number_of_points"))
     camera_intrinsic = params.get("camera_intrinsic")
+    camera_intrinsic = None if camera_intrinsic == "none" else eval(camera_intrinsic)
     sample_type = eval_sample_type(params.get("sample_type"))
     source_list = utils.eval_data_parallel(data=source_data,
                                            number_of_points=number_of_points,
-                                           camera_intrinsic=None if camera_intrinsic is None else eval(camera_intrinsic),
+                                           camera_intrinsic=camera_intrinsic,
                                            sample_type=sample_type)
 
     logger.debug("Loading target data.")
     params = config["target_params"]
     number_of_points = eval_number_of_points(params.get("number_of_points"))
     camera_intrinsic = params.get("camera_intrinsic")
+    camera_intrinsic = None if camera_intrinsic == "none" else eval(camera_intrinsic)
     sample_type = eval_sample_type(params.get("sample_type"))
     target_list = utils.eval_data_parallel(data=target_data,
                                            number_of_points=number_of_points,
-                                           camera_intrinsic=None if camera_intrinsic is None else eval(camera_intrinsic),
+                                           camera_intrinsic=camera_intrinsic,
                                            sample_type=sample_type)
 
     # Process source and target data
@@ -272,14 +306,13 @@ def main():
                                                      search_param_radius=params.getfloat("search_param_radius"),
                                                      draw=params.getboolean("draw"))
 
-    # Todo: Allow loading of and evaluation on ground truth poses.
-
     # Run registration algorithms
     if initializer is not None:
         logger.debug(f"Running initializer {initializer._name}.")
         params = config["feature_processing"]
         results = initializer.run_many(source_list=source_list,
                                        target_list=target_list,
+                                       init_list=eval_init_poses_or_ground_truth(data.get("init_poses")),
                                        one_vs_one=algorithms.getboolean("one_vs_one"),
                                        draw=draw_initializer,
                                        overwrite_colors=overwrite_colors_initializer,
@@ -288,7 +321,7 @@ def main():
                                        search_param_radius=params.getfloat("search_param_radius"))
         init_list = [result.transformation for result in results]
     else:
-        init_list = None  # Todo: Add option to center source at target as initialization
+        init_list = eval_init_poses_or_ground_truth(data.get("init_poses"))
     if refiner is not None:
         logger.debug(f"Running refiner {refiner._name}.")
         results = refiner.run_many(source_list=source_list,
@@ -303,6 +336,9 @@ def main():
                                    crop_scale=crop_scale,
                                    draw=draw_refiner,
                                    overwrite_colors=overwrite_colors_refiner)
+
+    # Todo: Allow evaluation on ground truth poses.
+    ground_truth = eval_init_poses_or_ground_truth(data.get("ground_truth"))
 
     names = list()
     if algorithms.getboolean("one_vs_one"):
