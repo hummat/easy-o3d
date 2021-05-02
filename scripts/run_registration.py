@@ -11,6 +11,7 @@ import time
 import glob
 import tabulate
 from typing import List, Union
+import copy
 
 logger = logging.getLogger(__name__)
 
@@ -136,38 +137,35 @@ def eval_search_param(search_param: str) -> utils.SearchParamTypes:
         raise ValueError(f"`search_param` must be one of 'hybrid', 'knn' or 'radius' but is {search_param}.")
 
 
-def eval_init_poses_or_ground_truth(init_poses: Union[str, None]) -> Union[List[np.ndarray], None]:
-    if init_poses is None:
+def eval_init_poses_or_ground_truth(poses: Union[str, None]) -> Union[List[np.ndarray], None]:
+    if poses is None:
         return None
     try:
-        poses = eval(init_poses)
+        poses = eval(poses)
         if isinstance(poses[0], list):
             if len(poses[0]) in [3, 4, 9]:
                 return [utils.eval_transformation_data(transformation_data=poses)]
-            else:
-                return [utils.eval_transformation_data(transformation_data=pose) for pose in poses]
+            return [utils.eval_transformation_data(transformation_data=pose) for pose in poses]
         else:
             return [utils.eval_transformation_data(transformation_data=pose) for pose in poses]
-    except NameError:
-        if os.path.exists(init_poses):
-            if "scene_gt.json" in init_poses:
-                poses = utils.get_ground_truth_pose_from_blenderproc_bopwriter(path_to_scene_gt_json=init_poses)
+    except (NameError, SyntaxError):
+        if os.path.exists(poses):
+            if "scene_gt.json" in poses:
+                poses = utils.get_ground_truth_pose_from_blenderproc_bopwriter(path_to_scene_gt_json=poses)
                 poses = [list(pose.values()) for pose in list(poses.values())]
                 poses = [pose for sublist in poses for pose in sublist]
                 return [pose for sublist in poses for pose in sublist]
-            else:
-                return [utils.eval_transformation_data(transformation_data=init_poses)]
-        elif init_poses.lower() == "none":
+            return [utils.eval_transformation_data(transformation_data=poses)]
+        elif poses.lower() == "none":
             return None
-        else:
-            return [utils.eval_transformation_data(transformation_data=pose) for pose in glob.glob(init_poses)]
+        return [utils.eval_transformation_data(transformation_data=pose) for pose in glob.glob(poses)]
 
 
 def main():
     # Evaluate command line and config arguments
     start = time.time()
     parser = argparse.ArgumentParser(description="Performs point cloud registration.")
-    parser.add_argument("-c", "--config", default="scripts/registration.ini", type=str,
+    parser.add_argument("-c", "--config", default="registration.ini", type=str,
                         help="Path to registration config.file.")
     parser.add_argument("--verbose", action="store_true", help="Get verbose output during execution.")
     args = parser.parse_args()
@@ -189,6 +187,7 @@ def main():
     params = config["initializer_params"]
     if initializer is not None:
         logger.debug(f"Loading initializer {initializer}.")
+        n_times_initializer = params.getint("n_times")
         draw_initializer = params.getboolean("draw")
         overwrite_colors_initializer = params.getboolean("overwrite_colors")
         if initializer.lower() == "ransac":
@@ -213,6 +212,7 @@ def main():
         logger.debug(f"Loading refiner {refiner}.")
         crop_target_around_source = params.getboolean("crop_target_around_source")
         crop_scale = params.getfloat("crop_scale")
+        n_times_refiner = params.getint("n_times")
         multi_scale_refiner = params.getboolean("multi_scale")
         scales = eval(params.get("scales"))
         iterations = eval(params.get("iterations"))
@@ -307,13 +307,15 @@ def main():
                                                      draw=params.getboolean("draw"))
 
     # Run registration algorithms
+    results = list()
     if initializer is not None:
         logger.debug(f"Running initializer {initializer._name}.")
         params = config["feature_processing"]
         results = initializer.run_many(source_list=source_list,
                                        target_list=target_list,
-                                       init_list=eval_init_poses_or_ground_truth(data.get("init_poses")),
+                                       init_list=eval_init_poses_or_ground_truth(data.get("poses")),
                                        one_vs_one=algorithms.getboolean("one_vs_one"),
+                                       n_times=n_times_initializer,
                                        draw=draw_initializer,
                                        overwrite_colors=overwrite_colors_initializer,
                                        search_param=eval_search_param(params.get("search_param")),
@@ -321,13 +323,14 @@ def main():
                                        search_param_radius=params.getfloat("search_param_radius"))
         init_list = [result.transformation for result in results]
     else:
-        init_list = eval_init_poses_or_ground_truth(data.get("init_poses"))
+        init_list = eval_init_poses_or_ground_truth(data.get("poses"))
     if refiner is not None:
         logger.debug(f"Running refiner {refiner._name}.")
         results = refiner.run_many(source_list=source_list,
                                    target_list=target_list,
                                    init_list=init_list,
                                    one_vs_one=algorithms.getboolean("one_vs_one"),
+                                   n_times=n_times_refiner,
                                    multi_scale=multi_scale_refiner,
                                    source_scales=scales,
                                    iterations=iterations,
@@ -336,25 +339,40 @@ def main():
                                    crop_scale=crop_scale,
                                    draw=draw_refiner,
                                    overwrite_colors=overwrite_colors_refiner)
+    logger.info(f"Execution took {time.time() - start} seconds.")
 
-    # Todo: Allow evaluation on ground truth poses.
     ground_truth = eval_init_poses_or_ground_truth(data.get("ground_truth"))
-
     names = list()
+    errors = list()
     if algorithms.getboolean("one_vs_one"):
-        for i in range(len(source_list)):
+        assert len(results) == len(source_list) == len(target_list)
+        if ground_truth is not None:
+            assert len(ground_truth) == len(results)
+        for i in range(len(results)):
             names.append(f"s{i} - t{i}")
+            if ground_truth is not None:
+                errors.append(np.linalg.norm(ground_truth[i] - results[i].transformation))
+            else:
+                errors.append("TBD")
     else:
+        assert len(results) == len(source_list) * len(target_list)
+        if ground_truth is not None:
+            assert len(ground_truth) == len(results)
         for i in range(len(target_list)):
             for j in range(len(source_list)):
                 names.append(f"s{j} - t{i}")
+                if ground_truth is not None:
+                    errors.append(np.linalg.norm(ground_truth.pop() - copy.deepcopy(results).pop().transformation))
+                else:
+                    errors.append("TBD")
+
     table = tabulate.tabulate([(name,
                                 result.fitness,
                                 result.inlier_rmse,
-                                np.asarray(result.correspondence_set).size) for name, result in zip(names, results)],
-                              headers=["source vs. target", "fitness", "inlier rmse", "#corresp."])
+                                len(result.correspondence_set),
+                                error) for name, result, error in zip(names, results, errors)],
+                              headers=["source vs. target", "fitness", "inlier rmse", "#corresp.", "error"])
     print(table)
-    logger.info(f"Execution took {time.time() - start} seconds.")
 
 
 if __name__ == "__main__":

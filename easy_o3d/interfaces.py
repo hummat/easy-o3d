@@ -40,8 +40,17 @@ class ICPTypes(Flag):
     COLOR = auto()
 
 
+class MetricTypes(Flag):
+    """Supported metric types."""
+    RMSE = auto()
+    FITNESS = auto()
+    SUM = auto()
+    BOTH = auto()
+
+
 class MyRegistrationResult:
     """Helper class mimicking Open3D's `RegistrationResult` but mutable and with added runtime."""
+
     def __init__(self,
                  correspondence_set: np.ndarray,
                  fitness: float,
@@ -117,7 +126,7 @@ class RegistrationInterface(ABC):
 
     def _eval_data_parallel(self, data_keys_or_values: List[InputTypes], **kwargs: Any) -> List[PointCloud]:
         return self.parallel(delayed(self._eval_data)(data_key_or_value=d, **kwargs) for d in data_keys_or_values)
-        
+
     @staticmethod
     def _compute_dist(point_cloud: PointCloud) -> float:
         """Returns maximum correspondence distance for registration based on `point_cloud` size.
@@ -146,7 +155,8 @@ class RegistrationInterface(ABC):
             parallel = Parallel(n_jobs=min(cpu_count(), len(data)), prefer="threads")
             values = parallel(delayed(eval_data)(data=value,
                                                  number_of_points=kwargs.get("number_of_points"),
-                                                 camera_intrinsic=kwargs.get("camera_intrinsic")) for value in data.values())
+                                                 camera_intrinsic=kwargs.get("camera_intrinsic")) for value in
+                              data.values())
             _data = dict(zip(list(data.keys()), values))
         else:
             _data = data
@@ -267,6 +277,78 @@ class RegistrationInterface(ABC):
         """
         raise NotImplementedError("A derived class should implement this method.")
 
+    def run_n_times(self,
+                    source: InputTypes,
+                    target: InputTypes,
+                    init: Union[np.ndarray, list] = np.eye(4),
+                    n_times: int = 3,
+                    threshold: float = 0.0,
+                    metric: MetricTypes = MetricTypes.BOTH,
+                    multi_scale: bool = False,
+                    **kwargs: Any) -> MyRegistrationResult:
+        """Runs the registration algorithm of the derived class.
+
+        Args:
+            source: The source data.
+            target: The target data.
+            init: The initial pose of `source`. Can be translation, rotation or transformation.
+            n_times: How often to run before returning best result. If -1, runs until below/above metric threshold.
+            threshold: Runs until below/above metric threshold if `n_times` is -1.
+            metric: Which metric to use to decide which result is best.
+            multi_scale: Use multi-scale registration instead of single scale.
+
+        Returns:
+            The best registration result from N runs.
+        """
+        best_result = MyRegistrationResult(correspondence_set=np.array([]),
+                                           inlier_rmse=np.infty,
+                                           fitness=0.0,
+                                           transformation=np.eye(4),
+                                           runtime=0.0)
+
+        _func = self.run_multi_scale if multi_scale else self.run
+
+        def _eval_result(_result, _best_result):
+            _metric = 0
+            if metric == MetricTypes.RMSE:
+                if _result.inlier_rmse < _best_result.inlier_rmse and len(_result.correspondence_set) > 0:
+                    _best_result = _result
+            elif metric == MetricTypes.FITNESS:
+                if _result.fitness > _best_result.fitness and len(_result.correspondence_set) > 0:
+                    _best_result = _result
+            elif metric == MetricTypes.SUM:
+                if _result.fitness - _result.inlier_rmse > _best_result.fitness - _result.inlier_rmse and len(_result.correspondence_set) > 0:
+                    _best_result = _result
+            elif metric == MetricTypes.BOTH:
+                if _result.fitness > _best_result.fitness and _result.inlier_rmse < best_result.inlier_rmse and len(_result.correspondence_set) > 0:
+                    _best_result = _result
+            else:
+                raise ValueError(f"{metric} is not a valid `MetricsType` type.")
+            return _best_result
+
+        if n_times != -1:
+            for n in range(n_times):
+                result = _func(source=source, target=target, init=init, **kwargs)
+                best_result = _eval_result(result, best_result)
+        else:
+            if metric == MetricTypes.RMSE:
+                while best_result.inlier_rmse > threshold:
+                    result = _func(source=source, target=target, init=init, **kwargs)
+                    best_result = _eval_result(result, best_result)
+            elif metric == MetricTypes.FITNESS:
+                while best_result.fitness < threshold:
+                    result = _func(source=source, target=target, init=init, **kwargs)
+                    best_result = _eval_result(result, best_result)
+            elif metric == MetricTypes.SUM:
+                while best_result.fitness - best_result.inlier_rmse < threshold:
+                    result = _func(source=source, target=target, init=init, **kwargs)
+                    best_result = _eval_result(result, best_result)
+            elif metric == MetricTypes.BOTH:
+                raise ValueError(f"Can't use threshold-based return with metric `BOTH`.")
+            else:
+                raise ValueError(f"{metric} is not a valid `MetricsType` type.")
+        return best_result
+
     def run_multi_scale(self,
                         source: InputTypes,
                         target: InputTypes,
@@ -373,9 +455,10 @@ class RegistrationInterface(ABC):
                  target_list: List[InputTypes],
                  init_list: Union[List[np.ndarray], List[list], None] = None,
                  one_vs_one: bool = False,
+                 n_times: int = 1,
                  multi_scale: bool = False,
                  multi_thread_preload: bool = True,
-                 **kwargs: Any) -> Union[List[RegistrationResult], List[MyRegistrationResult]]:
+                 **kwargs: Any) -> List[MyRegistrationResult]:
         """Convenience function to register multiple sources and targets. Takes accepts all arguments accepted by `run`.
 
         Args:
@@ -383,6 +466,7 @@ class RegistrationInterface(ABC):
             target_list: A list of targets.
             init_list: The initial poses of sources in `source_list`. Can be translation, rotation or transformation.
             one_vs_one: Register one source to one target. Otherwise, each source is registered to each target.
+            n_times: How often to run before returning best result. Further documentation at `run_n_times`.
             multi_scale: Use multi-scale registration instead of single scale.
             multi_thread_preload: If input type is string, pre-loads data from disk in parallel using multi-threading.
 
@@ -401,38 +485,49 @@ class RegistrationInterface(ABC):
             if init_list is not None:
                 assert len(init_list) == len(source_list)
             for source, target in zip(source_list, target_list):
-                init = (init_list.pop()) if init_list is not None else np.eye(4)
-                if multi_scale:
-                    results.append(self.run_multi_scale(source=source,
-                                                        target=target,
-                                                        init=init,
-                                                        **kwargs))
-                else:
-                    results.append(self.run(source=source,
-                                            target=target,
-                                            init=init,
-                                            **kwargs))
-        else:
-            if one_vs_one:
-                logger.warning(f"Source and target list have unequal length which is required for `one_vs_one`.")
-            if init_list is not None:
-                assert len(init_list) == len(source_list) * len(target_list),\
-                    f"Need to provide one initial pose for each source/target combination to be evaluated."
-            for target in target_list:
-                for source in source_list:
-                    if init_list and init_list is not None:
-                        init = init_list.pop()
-                    else:
-                        init = np.eye(4)
+                if n_times == 1:
                     if multi_scale:
                         results.append(self.run_multi_scale(source=source,
                                                             target=target,
-                                                            init=init,
+                                                            init=init_list.pop() if init_list else np.eye(4),
                                                             **kwargs))
                     else:
                         results.append(self.run(source=source,
                                                 target=target,
-                                                init=init,
+                                                init=init_list.pop() if init_list else np.eye(4),
                                                 **kwargs))
+                else:
+                    results.append(self.run_n_times(source=source,
+                                                    target=target,
+                                                    init=init_list.pop() if init_list else np.eye(4),
+                                                    n_times=n_times,
+                                                    multi_scale=multi_scale,
+                                                    **kwargs))
+        else:
+            if one_vs_one:
+                logger.warning(f"Source and target list have unequal length which is required for `one_vs_one`.")
+            if init_list is not None:
+                assert len(init_list) == len(source_list) * len(target_list), \
+                    f"Need to provide one initial pose for each source/target combination to be evaluated."
+            for target in target_list:
+                for source in source_list:
+                    if n_times == 1:
+                        if multi_scale:
+                            results.append(self.run_multi_scale(source=source,
+                                                                target=target,
+                                                                init=init_list.pop() if init_list else np.eye(4),
+                                                                **kwargs))
+                        else:
+                            results.append(self.run(source=source,
+                                                    target=target,
+                                                    init=init_list.pop() if init_list else np.eye(4),
+                                                    **kwargs))
+                    else:
+                        results.append(self.run_n_times(source=source,
+                                                        target=target,
+                                                        init=init_list.pop() if init_list else np.eye(4),
+                                                        n_times=n_times,
+                                                        multi_scale=multi_scale,
+                                                        **kwargs))
         logger.debug(f"`run_many` took {time.time() - start} seconds.")
         return results
