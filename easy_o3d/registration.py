@@ -193,7 +193,7 @@ class IterativeClosestPoint(RegistrationInterface):
     def run(self,
             source: InputTypes,
             target: InputTypes,
-            init: Union[np.ndarray, list] = np.eye(4),
+            init: Union[np.ndarray, list, str] = np.eye(4),
             crop_target_around_source: bool = False,
             crop_scale: float = 1.0,
             draw: bool = False,
@@ -206,7 +206,8 @@ class IterativeClosestPoint(RegistrationInterface):
         Args:
             source: The source data.
             target: The target data.
-            init: The initial pose of `source`. Can be translation, rotation or transformation.
+            init: The initial pose of `source`. Can be translation, rotation, transformation or "center", in which case
+                  `source` is translated to `target` center.
             crop_target_around_source: Crops `target` around the bounding box of `source`. Should only be used if `init`
                                        is already quite accurate.
             crop_scale: The scale of the `source` bounding box used for cropping `target`. Increase if `init` is
@@ -219,8 +220,11 @@ class IterativeClosestPoint(RegistrationInterface):
         """
         start = time.time()
         _init = eval_transformation_data(init)
+        if np.array_equal(_init, np.asarray("center")):
+            _init = eval_transformation_data(target.get_center())
         _source = self._eval_data(data_key_or_value=source, **kwargs)
         _target = self._eval_data(data_key_or_value=target, **kwargs)
+
         if crop_target_around_source:
             _target = self._crop_target_around_source(source=_source, target=_target, init=_init, crop_scale=crop_scale)
 
@@ -312,7 +316,7 @@ class FastGlobalRegistration(RegistrationInterface):
     def run(self,
             source: InputTypes,
             target: InputTypes,
-            init: Union[np.ndarray, list] = np.eye(4),
+            init: Union[np.ndarray, list, str] = np.eye(4),
             source_feature: Union[Feature, None] = None,
             target_feature: Union[Feature, None] = None,
             draw: bool = False,
@@ -326,15 +330,18 @@ class FastGlobalRegistration(RegistrationInterface):
         Args:
             source: The source data.
             target: The target data.
-            init: The initial pose of `source`. Can be translation, rotation or transformation.
+            init: The initial pose of `source`. Can be translation, rotation, transformation or "center", in which case
+                  `source` is translated to `target` center.
             source_feature: The FPFH feature of `source`. Computed based on default values if not provided.
             target_feature: The FPFH feature of `target`. Computed based on default values if not provided.
             draw: Visualize the registration result.
         """
         start = time.time()
-        _init = eval_transformation_data(init)
-        _source = self._eval_data(data_key_or_value=source, **kwargs).transform(_init)
         _target = self._eval_data(data_key_or_value=target, **kwargs)
+        _init = eval_transformation_data(init)
+        if np.array_equal(_init, np.asarray("center")):
+            _init = eval_transformation_data(target.get_center())
+        _source = copy.deepcopy(self._eval_data(data_key_or_value=source, **kwargs)).transform(_init)
 
         self.max_correspondence_distance = kwargs.get("max_correspondence_distance", self.max_correspondence_distance)
         if self.max_correspondence_distance == -1.0:
@@ -455,7 +462,7 @@ class RANSAC(RegistrationInterface):
                  ransac_n: int = 3,
                  checkers: Union[List[CheckerTypes], Tuple[CheckerTypes]] = (CheckerTypes.EDGE, CheckerTypes.DISTANCE),
                  similarity_threshold: float = 0.9,
-                 normal_angle_threshold: float = 0.52,  # ~30° in radians
+                 normal_angle_threshold: float = 30.0,
                  data_to_cache: Union[Dict[Any, InputTypes], None] = None) -> None:
         """
         Args:
@@ -470,7 +477,7 @@ class RANSAC(RegistrationInterface):
             ransac_n: Number of point-pair correspondences used for alignment.
             checkers: The correspondence checkers used to discard correspondences using low compute metrics.
             similarity_threshold: Edge length similarity checker threshold.
-            normal_angle_threshold: Normal angle similarity checker threshold.
+            normal_angle_threshold: Normal angle similarity checker threshold in degrees.
             data_to_cache: Data to be cached. Refer to base class for details.
         """
         super().__init__(name="RANSAC", data_to_cache=data_to_cache)
@@ -479,7 +486,7 @@ class RANSAC(RegistrationInterface):
         self.confidence = confidence
         self.max_correspondence_distance = max_correspondence_distance
         self.similarity_threshold = similarity_threshold
-        self.normal_angle_threshold = normal_angle_threshold
+        self.normal_angle_threshold = np.deg2rad(normal_angle_threshold)
         self.ransac_n = ransac_n
 
         self.algorithm = algorithm
@@ -525,7 +532,7 @@ class RANSAC(RegistrationInterface):
     def run(self,
             source: InputTypes,
             target: InputTypes,
-            init: Union[np.ndarray, list] = np.eye(4),
+            init: Union[np.ndarray, list, str] = np.eye(4),
             source_feature: Union[Feature, None] = None,
             target_feature: Union[Feature, None] = None,
             draw: bool = False,
@@ -539,15 +546,18 @@ class RANSAC(RegistrationInterface):
         Args:
             source: The source data.
             target: The target data.
-            init: The initial pose of `source`. Can be translation, rotation or transformation.
+            init: The initial pose of `source`. Can be translation, rotation, transformation or "center", in which case
+                  `source` is translated to `target` center.
             source_feature: The FPFH feature of `source`. Computed based on default values if not provided.
             target_feature: The FPFH feature of `target`. Computed based on default values if not provided.
             draw: Visualize the registration result.
         """
         start = time.time()
-        _init = eval_transformation_data(transformation_data=init)
-        _source = self._eval_data(data_key_or_value=source, **kwargs).transform(_init)
         _target = self._eval_data(data_key_or_value=target, **kwargs)
+        _init = eval_transformation_data(init)
+        if np.array_equal(_init, np.asarray("center")):
+            _init = eval_transformation_data(target.get_center())
+        _source = copy.deepcopy(self._eval_data(data_key_or_value=source, **kwargs)).transform(_init)
 
         if any(key in kwargs for key in ["max_iteration", "confidence"]):
             self.criteria = RANSACConvergenceCriteria(
@@ -640,7 +650,10 @@ class RANSAC(RegistrationInterface):
         logger.debug(f"{self._name} result: fitness={result.fitness}, inlier_rmse={result.inlier_rmse}.")
 
         if draw:
-            self.draw_registration_result(source=_source, target=_target, pose=result.transformation, **kwargs)
+            self.draw_registration_result(source=_source,
+                                          target=_target,
+                                          pose=result.transformation,
+                                          **kwargs)
 
         return MyRegistrationResult(correspondence_set=result.correspondence_set,
                                     fitness=result.fitness,

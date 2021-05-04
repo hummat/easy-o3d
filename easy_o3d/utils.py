@@ -39,6 +39,7 @@ from joblib import Parallel, delayed
 from multiprocessing import cpu_count
 from enum import Flag, auto
 from typing import Any, List, Union, Tuple, Dict
+import math
 
 import numpy as np
 import open3d as o3d
@@ -56,6 +57,7 @@ ImageTypes = Union[Image, RGBDImage, np.ndarray, str]
 RGBDImageTypes = Union[ImageTypes, List[ImageTypes]]
 InputTypes = Union[PointCloud, TriangleMesh, RGBDImageTypes]
 CameraTypes = Union[np.ndarray, PinholeCameraIntrinsic, PinholeCameraIntrinsicParameters]
+TransformationTypes = Union[np.ndarray, List[float], List[List[float]], str]
 
 logger = logging.getLogger(__name__)
 
@@ -641,21 +643,25 @@ def convert_rgbd_image_to_point_cloud(rgbd_image_or_path: RGBDImageTypes,
                                                project_valid_depth_only=kwargs.get("project_valid_depth_only", True))
 
 
-def eval_transformation_data(transformation_data: Union[np.ndarray, List[float], List[List[float]], str]) -> np.ndarray:
+def eval_transformation_data(transformation_data: TransformationTypes) -> np.ndarray:
     """Evaluates different types of transformation data to obtain a 4x4 transformation matrix.
 
     Args:
         transformation_data: Array or list(s) containing transformation (rotation, translation) data.
 
     Returns:
-        A 4x4 transformation matrix.
+        A 4x4 transformation matrix or "center".
     """
     if isinstance(transformation_data, str):
+        if transformation_data.lower() == "center":
+            return np.asarray("center")
         data = transformation_data if os.path.exists(transformation_data) else eval(transformation_data)
     else:
         data = transformation_data
 
     if isinstance(data, np.ndarray):
+        if np.array_equal(data, np.asarray("center")):
+            return data
         if data.size == 16:
             return data.reshape(4, 4)
         elif data.size in [3, 4]:
@@ -929,3 +935,66 @@ def draw_geometries(geometries: List[o3d.geometry.Geometry],
                                       point_show_normal=kwargs.get("point_show_normal", False),
                                       mesh_show_wireframe=kwargs.get("mesh_show_wireframe", False),
                                       mesh_show_back_face=kwargs.get("mesh_show_back_face", False))
+
+
+def get_transformation_error(transformation_estimate: TransformationTypes,
+                             transformation_ground_truth: TransformationTypes,
+                             in_degrees: bool = True) -> Tuple[float, float]:
+    """Computes the rotational and translational error between estimated and ground-truth transformation data.
+
+    Args:
+        transformation_estimate: The estimated transformation.
+        transformation_ground_truth: The ground-truth transformation.
+        in_degrees: Return rotational error in degrees instead of radians.
+
+    Returns:
+        Rotational and translation error between estimated and ground-truth transformation.
+    """
+    T_est = eval_transformation_data(transformation_data=transformation_estimate)
+    T_gt = eval_transformation_data(transformation_data=transformation_ground_truth)
+    error_rot = get_rotation_error(rotation_estimate=T_est[:3, :3],
+                                   rotation_ground_truth=T_gt[:3, :3],
+                                   in_degrees=in_degrees)
+    error_trans = get_translation_error(translation_estimate=T_est[:3, 3],
+                                        translation_ground_truth=T_gt[:3, 3])
+    return error_rot, error_trans
+
+
+def get_rotation_error(rotation_estimate: np.ndarray,
+                       rotation_ground_truth: np.ndarray,
+                       in_degrees: bool = True) -> float:
+    """Computes the error between estimated and ground-truth rotation in degrees or radians.
+
+    Args:
+        rotation_estimate: The estimated rotation.
+        rotation_ground_truth: The ground-truth rotation.
+        in_degrees: Return rotational error in degrees instead of radians.
+
+    Returns:
+        Error between estimated and ground-truth rotation in degrees or radians.
+    """
+    assert (rotation_estimate.shape == rotation_ground_truth.shape == (3, 3))
+    error_cos = 0.5 * (np.trace(rotation_estimate @ rotation_ground_truth.T) - 1.0)
+
+    # Avoid invalid values due to numerical errors.
+    error_cos = min(1.0, max(-1.0, error_cos))
+
+    error_rad = math.acos(error_cos)
+    if in_degrees:
+        return np.rad2deg(error_rad)  # Convert [rad] to [deg].
+    return error_rad
+
+
+def get_translation_error(translation_estimate: np.ndarray, translation_ground_truth: np.ndarray) -> float:
+    """Computes the mean-squared translational error between estimated and ground-truth translation.
+
+    Args:
+        translation_estimate: The estimated translation.
+        translation_ground_truth: The ground-truth translation.
+
+    Returns:
+        Mean-squared-error between estimated and ground-truth translation.
+    """
+    assert (translation_estimate.size == translation_ground_truth.size == 3)
+    error = np.linalg.norm(translation_ground_truth - translation_estimate)
+    return error

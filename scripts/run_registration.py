@@ -11,7 +11,6 @@ import time
 import glob
 import tabulate
 from typing import List, Union
-import copy
 
 logger = logging.getLogger(__name__)
 
@@ -137,17 +136,19 @@ def eval_search_param(search_param: str) -> utils.SearchParamTypes:
         raise ValueError(f"`search_param` must be one of 'hybrid', 'knn' or 'radius' but is {search_param}.")
 
 
-def eval_init_poses_or_ground_truth(poses: Union[str, None]) -> Union[List[np.ndarray], None]:
+def eval_init_poses_or_ground_truth(poses: Union[str, None]) -> Union[List[np.ndarray], List[str], None]:
     if poses is None:
         return None
     try:
         poses = eval(poses)
-        if isinstance(poses[0], list):
-            if len(poses[0]) in [3, 4, 9]:
-                return [utils.eval_transformation_data(transformation_data=poses)]
-            return [utils.eval_transformation_data(transformation_data=pose) for pose in poses]
-        else:
-            return [utils.eval_transformation_data(transformation_data=pose) for pose in poses]
+        if not isinstance(poses, (list, tuple)):
+            raise NameError
+        if isinstance(poses[0], (int, float)):
+            return [utils.eval_transformation_data(transformation_data=poses)]
+        elif isinstance(poses[0], (list, tuple)):
+            if len(poses[0]) in [3, 4, 9] and all(isinstance(n, (float, int)) for n in poses[0]):
+                return [utils.eval_transformation_data(transformation_data=poses[0])]
+        return [utils.eval_transformation_data(transformation_data=pose) for pose in poses]
     except (NameError, SyntaxError):
         if os.path.exists(poses):
             if "scene_gt.json" in poses:
@@ -158,10 +159,12 @@ def eval_init_poses_or_ground_truth(poses: Union[str, None]) -> Union[List[np.nd
             return [utils.eval_transformation_data(transformation_data=poses)]
         elif poses.lower() == "none":
             return None
-        return [utils.eval_transformation_data(transformation_data=pose) for pose in glob.glob(poses)]
+        elif poses.lower() == "center":
+            return [np.asarray("center")]
+        return [utils.eval_transformation_data(transformation_data=pose) for pose in sorted(glob.glob(poses))]
 
 
-def main():
+def run(config_dict: Union[dict, None] = None):
     # Evaluate command line and config arguments
     start = time.time()
     parser = argparse.ArgumentParser(description="Performs point cloud registration.")
@@ -170,8 +173,8 @@ def main():
     parser.add_argument("--verbose", action="store_true", help="Get verbose output during execution.")
     args = parser.parse_args()
 
-    config = configparser.ConfigParser(allow_no_value=True, inline_comment_prefixes='#')
-    config.read(args.config)
+    config = configparser.ConfigParser(inline_comment_prefixes='#')
+    config.read(args.config) if config_dict is None else config.read_dict(config_dict)
 
     data = config["data"]
     algorithms = config["algorithms"]
@@ -184,9 +187,14 @@ def main():
 
     # Instantiate initializer
     initializer = algorithms.get("initializer")
+    assert initializer in ["none", "ransac", "fgr"],\
+        f"Invalid initializer {initializer}. Must be one of 'none', 'ransac', 'fgr."
     params = config["initializer_params"]
-    if initializer is not None:
+    if initializer is not None and initializer.lower() != "none":
         logger.debug(f"Loading initializer {initializer}.")
+        normal_angle_threshold = params.getfloat("normal_angle_threshold")
+        if not options.getboolean("in_degrees"):
+            normal_angle_threshold = np.rad2deg(normal_angle_threshold)
         n_times_initializer = params.getint("n_times")
         draw_initializer = params.getboolean("draw")
         overwrite_colors_initializer = params.getboolean("overwrite_colors")
@@ -198,17 +206,20 @@ def main():
                                               ransac_n=params.getint("ransac_n"),
                                               checkers=eval_checkers(params.get("checkers")),
                                               similarity_threshold=params.getfloat("similarity_threshold"),
-                                              normal_angle_threshold=params.getfloat("normal_angle_threshold"))
+                                              normal_angle_threshold=normal_angle_threshold)
         elif initializer.lower() in ["fgr", "fast_global_registration", "fastglobalregistration"]:
             initializer = registration.FastGlobalRegistration(max_iteration=params.getint("max_iteration"),
                                                               max_correspondence_distance=params.getfloat("max_correspondence_distance"))
         else:
             raise ValueError(f"Only `ransac` and `fgr` supported as `initializer` but is {initializer}.")
+    else:
+        initializer = None
 
     # Instantiate refiner
     refiner = algorithms.get("refiner")
+    assert refiner in ["none", "icp"], f"Invalid refiner {refiner}. Must be one of 'none', 'icp'."
     params = config["refiner_params"]
-    if refiner is not None:
+    if refiner is not None and refiner.lower() != "none":
         logger.debug(f"Loading refiner {refiner}.")
         crop_target_around_source = params.getboolean("crop_target_around_source")
         crop_scale = params.getfloat("crop_scale")
@@ -223,17 +234,17 @@ def main():
             refiner = registration.IterativeClosestPoint(relative_fitness=params.getfloat("relative_fitness"),
                                                          relative_rmse=params.getfloat("relative_rmse"),
                                                          max_iteration=params.getint("max_iteration"),
-                                                         max_correspondence_distance=params.getfloat(
-                                                             "max_correspondence_distance"),
-                                                         estimation_method=eval_estimation_method(
-                                                             params.get("estimation_method")),
+                                                         max_correspondence_distance=params.getfloat("max_correspondence_distance"),
+                                                         estimation_method=eval_estimation_method(params.get("estimation_method")),
                                                          with_scaling=params.getboolean("with_scaling"),
                                                          kernel=eval_kernel(params.get("kernel")),
                                                          kernel_noise_std=params.getfloat("kernel_noise_std"))
         else:
             raise ValueError(f"Only `icp` supported as `refiner` but is {refiner}.")
-    if initializer is None and refiner is None:
-        raise ValueError(f"Either `initializer` or `refiner` need to be specified.")
+    else:
+        refiner = None
+    assert initializer is not None or refiner is not None,\
+        f"Either `initializer` or `refiner` need to be specified."
 
     # Evaluate source and target data config
     logger.debug("Evaluating data.")
@@ -308,12 +319,13 @@ def main():
 
     # Run registration algorithms
     results = list()
+    init_list = eval_init_poses_or_ground_truth(data.get("init_poses"))
     if initializer is not None:
         logger.debug(f"Running initializer {initializer._name}.")
         params = config["feature_processing"]
         results = initializer.run_many(source_list=source_list,
                                        target_list=target_list,
-                                       init_list=eval_init_poses_or_ground_truth(data.get("poses")),
+                                       init_list=init_list,
                                        one_vs_one=algorithms.getboolean("one_vs_one"),
                                        n_times=n_times_initializer,
                                        draw=draw_initializer,
@@ -322,8 +334,6 @@ def main():
                                        search_param_knn=params.getint("search_param_knn"),
                                        search_param_radius=params.getfloat("search_param_radius"))
         init_list = [result.transformation for result in results]
-    else:
-        init_list = eval_init_poses_or_ground_truth(data.get("poses"))
     if refiner is not None:
         logger.debug(f"Running refiner {refiner._name}.")
         results = refiner.run_many(source_list=source_list,
@@ -339,8 +349,9 @@ def main():
                                    crop_scale=crop_scale,
                                    draw=draw_refiner,
                                    overwrite_colors=overwrite_colors_refiner)
-    logger.info(f"Execution took {time.time() - start} seconds.")
+    logger.debug(f"Execution took {time.time() - start} seconds.")
 
+    # Evaluate registration results
     ground_truth = eval_init_poses_or_ground_truth(data.get("ground_truth"))
     names = list()
     errors = list()
@@ -351,29 +362,69 @@ def main():
         for i in range(len(results)):
             names.append(f"s{i} - t{i}")
             if ground_truth is not None:
-                errors.append(np.linalg.norm(ground_truth[i] - results[i].transformation))
+                errors.append(utils.get_transformation_error(results[i].transformation,
+                                                             ground_truth[i],
+                                                             in_degrees=options.getboolean("use_degrees")))
             else:
-                errors.append("TBD")
+                errors.append(('?', '?'))
     else:
         assert len(results) == len(source_list) * len(target_list)
         if ground_truth is not None:
             assert len(ground_truth) == len(results)
+        estimates = [T.transformation for T in results]
         for i in range(len(target_list)):
             for j in range(len(source_list)):
                 names.append(f"s{j} - t{i}")
                 if ground_truth is not None:
-                    errors.append(np.linalg.norm(ground_truth.pop() - copy.deepcopy(results).pop().transformation))
+                    errors.append(utils.get_transformation_error(estimates.pop(),
+                                                                 ground_truth.pop(),
+                                                                 in_degrees=options.getboolean("use_degrees")))
                 else:
-                    errors.append("TBD")
+                    errors.append(('?', '?'))
+    errors_rot = [error[0] for error in errors]
+    errors_trans = [error[1] for error in errors]
 
-    table = tabulate.tabulate([(name,
-                                result.fitness,
-                                result.inlier_rmse,
-                                len(result.correspondence_set),
-                                error) for name, result, error in zip(names, results, errors)],
-                              headers=["source vs. target", "fitness", "inlier rmse", "#corresp.", "error"])
-    print(table)
+    # Print evaluation results
+    if options.getboolean("print_results"):
+        table = tabulate.tabulate([(name,
+                                    result.fitness,
+                                    result.inlier_rmse,
+                                    len(result.correspondence_set),
+                                    error_rot,
+                                    error_trans) for name, result, error_rot, error_trans in zip(names,
+                                                                                                 results,
+                                                                                                 errors_rot,
+                                                                                                 errors_trans)],
+                                  headers=["source vs. target",
+                                           "fitness",
+                                           "inlier rmse",
+                                           "# corresp.",
+                                           f"error rot. {'[deg]' if options.getboolean('use_degrees') else '[rad]'}",
+                                           "error trans. [m]"])
+        print(table)
+
+    # Return results
+    _return = options.get("return").lower()
+    if _return == "all":
+        return {"names": names,
+                "results": results,
+                "transforms": [result.transformation for result in results],
+                "errors_rot": errors_rot,
+                "errors_trans": errors_trans}
+    else:
+        return_data = dict()
+        if "names" in _return:
+            return_data["names"] = names
+        if "results" in _return:
+            return_data["results"] = results
+        if "transforms" in _return:
+            return_data["transforms"] = [result.transformation for result in results]
+        if "errors_rot" in _return:
+            return_data["errors_rot"] = errors_rot
+        if "errors_trans" in _return:
+            return_data["errors_trans"] = errors_trans
+        return return_data
 
 
 if __name__ == "__main__":
-    main()
+    run()

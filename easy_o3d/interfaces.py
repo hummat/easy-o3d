@@ -106,7 +106,7 @@ class RegistrationInterface(ABC):
         """Returns cached data if possible. Processes input to return point cloud otherwise.
 
         Args:
-            data_key_or_value: data_key_or_value
+            data_key_or_value: Either data to be evaluated or key to cached data.
 
         Returns:
             The cached or loaded/processed point cloud data.
@@ -125,6 +125,14 @@ class RegistrationInterface(ABC):
                          camera_intrinsic=kwargs.get("camera_intrinsic"))
 
     def _eval_data_parallel(self, data_keys_or_values: List[InputTypes], **kwargs: Any) -> List[PointCloud]:
+        """Runs _eval_data in parallel threads.
+
+        Args:
+            data_keys_or_values: List of data to be evaluated or keys to cached data.
+
+        Returns:
+            List of cached or loaded/processed point cloud data.
+        """
         return self.parallel(delayed(self._eval_data)(data_key_or_value=d, **kwargs) for d in data_keys_or_values)
 
     @staticmethod
@@ -258,14 +266,15 @@ class RegistrationInterface(ABC):
     def run(self,
             source: InputTypes,
             target: InputTypes,
-            init: Union[np.ndarray, list] = np.eye(4),
+            init: Union[np.ndarray, list, str] = np.eye(4),
             **kwargs: Any) -> MyRegistrationResult:
         """Runs the registration algorithm of the derived class.
 
         Args:
             source: The source data.
             target: The target data.
-            init: The initial pose of `source`. Can be translation, rotation or transformation.
+            init: The initial pose of `source`. Can be translation, rotation, transformation or "center", in which case
+                  `source` is translated to `target` center.
 
         Raises:
             NotImplementedError: A derived class should implement this method.
@@ -453,7 +462,7 @@ class RegistrationInterface(ABC):
     def run_many(self,
                  source_list: List[InputTypes],
                  target_list: List[InputTypes],
-                 init_list: Union[List[np.ndarray], List[list], None] = None,
+                 init_list: Union[List[np.ndarray], List[list], str, None] = None,
                  one_vs_one: bool = False,
                  n_times: int = 1,
                  multi_scale: bool = False,
