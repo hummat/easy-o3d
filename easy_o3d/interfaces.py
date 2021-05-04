@@ -20,7 +20,7 @@ import numpy as np
 import open3d as o3d
 
 from .utils import (InputTypes, DownsampleTypes, SearchParamTypes, OrientationTypes, eval_data, draw_geometries,
-                    process_point_cloud, eval_transformation_data)
+                    process_point_cloud, TransformationTypes)
 
 PointToPoint = o3d.pipelines.registration.TransformationEstimationPointToPoint
 PointToPlane = o3d.pipelines.registration.TransformationEstimationPointToPlane
@@ -68,7 +68,7 @@ class RegistrationInterface(ABC):
     """Interface for registration subclasses. Handles data caching and visualization.
 
     Attributes:
-        _name: The name of the registration algorithm.
+        name: The name of the registration algorithm.
         _cached_data: A dictionary for caching data used during registration.
 
     Methods:
@@ -90,7 +90,7 @@ class RegistrationInterface(ABC):
             name: The name of the registration algorithm.
             data_to_cache: The data to be cached.
         """
-        self._name = name
+        self.name = name
         self._parallel = None
         self._cached_data = dict()
         if data_to_cache is not None:
@@ -260,13 +260,13 @@ class RegistrationInterface(ABC):
             to_draw.append(_source.get_axis_aligned_bounding_box())
             to_draw.append(_target.get_axis_aligned_bounding_box())
 
-        draw_geometries(geometries=to_draw, window_name=f"{self._name} Registration Result", **kwargs)
+        draw_geometries(geometries=to_draw, window_name=f"{self.name} Registration Result", **kwargs)
 
     @abstractmethod
     def run(self,
             source: InputTypes,
             target: InputTypes,
-            init: Union[np.ndarray, list, str] = np.eye(4),
+            init: TransformationTypes = np.eye(4),
             **kwargs: Any) -> MyRegistrationResult:
         """Runs the registration algorithm of the derived class.
 
@@ -289,7 +289,7 @@ class RegistrationInterface(ABC):
     def run_n_times(self,
                     source: InputTypes,
                     target: InputTypes,
-                    init: Union[np.ndarray, list] = np.eye(4),
+                    init: TransformationTypes = np.eye(4),
                     n_times: int = 3,
                     threshold: float = 0.0,
                     metric: MetricTypes = MetricTypes.BOTH,
@@ -361,7 +361,7 @@ class RegistrationInterface(ABC):
     def run_multi_scale(self,
                         source: InputTypes,
                         target: InputTypes,
-                        init: [np.ndarray, list] = np.eye(4),
+                        init: TransformationTypes = np.eye(4),
                         source_scales: Union[Tuple[float], List[float]] = (0.04, 0.02, 0.01),
                         target_scales: Union[Tuple[float], List[float], None] = None,
                         iterations: Union[Tuple[int], List[int]] = (50, 30, 14),
@@ -407,7 +407,7 @@ class RegistrationInterface(ABC):
             source_down = process_point_cloud(point_cloud=_source,
                                               downsample=kwargs.get("downsample", DownsampleTypes.VOXEL),
                                               downsample_factor=source_scale,
-                                              estimate_normals=False if "POINT_TO_POINT" in self._name else True,
+                                              estimate_normals=False if "POINT_TO_POINT" in self.name else True,
                                               recalculate_normals=kwargs.get("recalculate_normals", False),
                                               orient_normals=kwargs.get("orient_normals", OrientationTypes.NONE),
                                               search_param=kwargs.get("search_param", SearchParamTypes.HYBRID),
@@ -416,13 +416,13 @@ class RegistrationInterface(ABC):
             target_down = process_point_cloud(point_cloud=_target,
                                               downsample=kwargs.get("downsample", DownsampleTypes.VOXEL),
                                               downsample_factor=target_scale,
-                                              estimate_normals=False if "POINT_TO_POINT" in self._name else True,
+                                              estimate_normals=False if "POINT_TO_POINT" in self.name else True,
                                               recalculate_normals=kwargs.get("recalculate_normals", False),
                                               orient_normals=kwargs.get("orient_normals", OrientationTypes.NONE),
                                               search_param=kwargs.get("search_param", SearchParamTypes.HYBRID),
                                               search_param_radius=target_radius,
                                               search_param_knn=kwargs.get("search_param_knn", 30))
-            if "ICP" in self._name:
+            if "ICP" in self.name:
                 current_result = self.run(source=source_down,
                                           target=target_down,
                                           max_correspondence_distance=source_radius,
@@ -462,7 +462,7 @@ class RegistrationInterface(ABC):
     def run_many(self,
                  source_list: List[InputTypes],
                  target_list: List[InputTypes],
-                 init_list: Union[List[np.ndarray], List[list], str, None] = None,
+                 init_list: Union[TransformationTypes, None] = None,
                  one_vs_one: bool = False,
                  n_times: int = 1,
                  multi_scale: bool = False,
@@ -491,50 +491,61 @@ class RegistrationInterface(ABC):
 
         results = list()
         if one_vs_one and len(source_list) == len(target_list):
-            if init_list is not None:
-                assert len(init_list) == len(source_list)
+            is_list = False
+            init_list = np.eye(4) if init_list is None else init_list
+            if isinstance(init_list, list):
+                if len(init_list) > 1:
+                    assert len(init_list) == len(source_list)
+                    is_list = True
+                else:
+                    init_list = init_list[0]
             for source, target in zip(source_list, target_list):
                 if n_times == 1:
                     if multi_scale:
                         results.append(self.run_multi_scale(source=source,
                                                             target=target,
-                                                            init=init_list.pop() if init_list else np.eye(4),
+                                                            init=init_list.pop(0) if is_list else init_list,
                                                             **kwargs))
                     else:
                         results.append(self.run(source=source,
                                                 target=target,
-                                                init=init_list.pop() if init_list else np.eye(4),
+                                                init=init_list.pop(0) if is_list else init_list,
                                                 **kwargs))
                 else:
                     results.append(self.run_n_times(source=source,
                                                     target=target,
-                                                    init=init_list.pop() if init_list else np.eye(4),
+                                                    init=init_list.pop(0) if is_list else init_list,
                                                     n_times=n_times,
                                                     multi_scale=multi_scale,
                                                     **kwargs))
         else:
             if one_vs_one:
                 logger.warning(f"Source and target list have unequal length which is required for `one_vs_one`.")
-            if init_list is not None:
-                assert len(init_list) == len(source_list) * len(target_list), \
-                    f"Need to provide one initial pose for each source/target combination to be evaluated."
+            is_list = False
+            init_list = np.eye(4) if init_list is None else init_list
+            if isinstance(init_list, list):
+                if len(init_list) > 1:
+                    assert len(init_list) == len(source_list) * len(target_list)
+                    is_list = True
+                else:
+                    init_list = init_list[0]
             for target in target_list:
                 for source in source_list:
                     if n_times == 1:
                         if multi_scale:
                             results.append(self.run_multi_scale(source=source,
                                                                 target=target,
-                                                                init=init_list.pop() if init_list else np.eye(4),
+                                                                init=init_list.pop(0) if is_list else init_list,
                                                                 **kwargs))
                         else:
                             results.append(self.run(source=source,
                                                     target=target,
-                                                    init=init_list.pop() if init_list else np.eye(4),
+                                                    init=init_list.pop(0) if is_list else init_list,
                                                     **kwargs))
                     else:
                         results.append(self.run_n_times(source=source,
                                                         target=target,
-                                                        init=init_list.pop() if init_list else np.eye(4),
+                                                        init=init_list.pop(0) if is_list else init_list,
                                                         n_times=n_times,
                                                         multi_scale=multi_scale,
                                                         **kwargs))

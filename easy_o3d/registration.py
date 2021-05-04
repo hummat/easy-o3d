@@ -73,7 +73,7 @@ class IterativeClosestPoint(RegistrationInterface):
         max_iteration: Maximum number of iterations before the algorithm is stopped.
         max_correspondence_distance: Maximum correspondence points-pair distance.
         estimation_method: The estimation method.
-        with_scaling: Use non-rigid transform in Point-to-Point ICP to align source to target.
+        with_scaling: Use non-rigid transformation in Point-to-Point ICP to align source to target.
         kernel: Use robust kernel in Point-to-Plane ICP to deal with noise.
         kernel_noise_std: The estimated/assumed noise standard deviation in the target data used in `kernel`.
         algorithm: The type of ICP registration algorithm used in `run`.
@@ -102,7 +102,7 @@ class IterativeClosestPoint(RegistrationInterface):
             max_iteration: Maximum number of iterations before the algorithm is stopped.
             max_correspondence_distance: Maximum correspondence points-pair distance.
             estimation_method: The estimation method used by ICP.
-            with_scaling: Use non-rigid transform in Point-to-Point ICP to align source to target.
+            with_scaling: Use non-rigid transformation in Point-to-Point ICP to align source to target.
             kernel: Use robust kernel in Point-to-Plane ICP to deal with noise.
             kernel_noise_std: The estimated/assumed noise standard deviation in the target data used in `kernel`.
             data_to_cache: Data to be cached. Refer to base class for details.
@@ -117,13 +117,13 @@ class IterativeClosestPoint(RegistrationInterface):
         self.algorithm = o3d.pipelines.registration.registration_icp
         self.estimation_method = estimation_method
         if self.estimation_method == ICPTypes.POINT:
-            self._name = f"POINT_TO_POINT_{self._name}"
+            self.name = f"POINT_TO_POINT_{self.name}"
             self._estimation_method = PointToPoint
         elif self.estimation_method == ICPTypes.PLANE:
-            self._name = f"POINT_TO_PLANE_{self._name}"
+            self.name = f"POINT_TO_PLANE_{self.name}"
             self._estimation_method = PointToPlane
         elif self.estimation_method == ICPTypes.COLOR:
-            self._name = f"COLORED_{self._name}"
+            self.name = f"COLORED_{self.name}"
             self._estimation_method = ColoredICP
             self.algorithm = o3d.pipelines.registration.registration_colored_icp
         else:
@@ -263,8 +263,8 @@ class IterativeClosestPoint(RegistrationInterface):
                                 estimation_method=self._estimation_method,
                                 criteria=self.criteria)
 
-        logger.debug(f"{self._name} took {time.time() - start} seconds.")
-        logger.debug(f"{self._name} result: fitness={result.fitness}, inlier_rmse={result.inlier_rmse}.")
+        logger.debug(f"{self.name} took {time.time() - start} seconds.")
+        logger.debug(f"{self.name} result: fitness={result.fitness}, inlier_rmse={result.inlier_rmse}.")
 
         if draw:
             self.draw_registration_result(source=_source, target=_target, pose=result.transformation, **kwargs)
@@ -408,8 +408,8 @@ class FastGlobalRegistration(RegistrationInterface):
                                 target_feature=_target_feature,
                                 option=self.option)
 
-        logger.debug(f"{self._name} took {time.time() - start} seconds.")
-        logger.debug(f"{self._name} result: fitness={result.fitness}, inlier_rmse={result.inlier_rmse}.")
+        logger.debug(f"{self.name} took {time.time() - start} seconds.")
+        logger.debug(f"{self.name} result: fitness={result.fitness}, inlier_rmse={result.inlier_rmse}.")
 
         if draw:
             self.draw_registration_result(source=_source, target=_target, pose=result.transformation, **kwargs)
@@ -434,7 +434,7 @@ class RANSAC(RegistrationInterface):
         confidence: Threshold for algorithm convergence based on point-pair correspondence confidence.
         max_correspondence_distance: Maximum correspondence points-pair distance.
         estimation_method: The estimation method used by RANSAC.
-        with_scaling: Use non-rigid transform in Point-to-Point estimation method to align source to target.
+        with_scaling: Use non-rigid transformation in Point-to-Point estimation method to align source to target.
         kernel: Use robust kernel in Point-to-Plane estimation method to deal with noise.
         kernel_noise_std: The estimated/assumed noise standard deviation in the target data used in `kernel`.
         ransac_n: Number of point-pair correspondences used for alignment.
@@ -471,7 +471,7 @@ class RANSAC(RegistrationInterface):
             confidence: Threshold for algorithm convergence based on point-pair correspondence confidence.
             max_correspondence_distance: Maximum correspondence points-pair distance.
             estimation_method: The estimation method used by RANSAC.
-            with_scaling: Use non-rigid transform in Point-to-Point estimation method to align source to target.
+            with_scaling: Use non-rigid transformation in Point-to-Point estimation method to align source to target.
             kernel: Use robust kernel in Point-to-Plane estimation method to deal with noise.
             kernel_noise_std: The estimated/assumed noise standard deviation in the target data used in `kernel`.
             ransac_n: Number of point-pair correspondences used for alignment.
@@ -646,8 +646,8 @@ class RANSAC(RegistrationInterface):
                                 checkers=self._eval_checkers(**kwargs),
                                 criteria=self.criteria)
 
-        logger.debug(f"{self._name} took {time.time() - start} seconds.")
-        logger.debug(f"{self._name} result: fitness={result.fitness}, inlier_rmse={result.inlier_rmse}.")
+        logger.debug(f"{self.name} took {time.time() - start} seconds.")
+        logger.debug(f"{self.name} result: fitness={result.fitness}, inlier_rmse={result.inlier_rmse}.")
 
         if draw:
             self.draw_registration_result(source=_source,

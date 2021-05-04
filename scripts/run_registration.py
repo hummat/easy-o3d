@@ -6,11 +6,12 @@ import os
 import numpy as np
 import argparse
 import configparser
+from configparser import SectionProxy
 import logging
 import time
 import glob
 import tabulate
-from typing import List, Union
+from typing import List, Union, Dict, Any
 
 logger = logging.getLogger(__name__)
 
@@ -61,13 +62,16 @@ def eval_checkers(checkers: str) -> List[registration.CheckerTypes]:
     return checker_list
 
 
-def eval_number_of_points(number_of_points: str) -> Union[int, List[int]]:
-    _number_of_points = eval(number_of_points)
-    if isinstance(_number_of_points, list):
-        if len(_number_of_points) == 1:
-            return int(_number_of_points[0])
-        return [int(points) for points in _number_of_points]
-    return int(_number_of_points)
+def eval_number_of_points(number_of_points: str) -> Union[int, List[int], None]:
+    try:
+        _number_of_points = eval(number_of_points)
+        if isinstance(_number_of_points, list):
+            if len(_number_of_points) == 1:
+                return int(_number_of_points[0])
+            return [int(points) for points in _number_of_points]
+        return int(_number_of_points)
+    except (NameError, SyntaxError):
+        return None
 
 
 def eval_downsample(downsample: Union[str, None]) -> utils.DownsampleTypes:
@@ -115,8 +119,10 @@ def eval_orient_normals(orient_normals: Union[str, None]) -> utils.OrientationTy
                              f"is {orient_normals}.")
 
 
-def eval_sample_type(sample_type: str) -> utils.SampleTypes:
-    if sample_type.lower() in ["uniform", "uniformly", "none"]:
+def eval_sample_type(sample_type: str) -> [utils.SampleTypes, None]:
+    if sample_type.lower() == "none":
+        return None
+    if sample_type.lower() in ["uniform", "uniformly"]:
         return utils.SampleTypes.UNIFORMLY
     elif sample_type.lower() in ["poisson", "disk", "poissondisk", "poisson_disk"]:
         return utils.SampleTypes.POISSON_DISK
@@ -156,12 +162,49 @@ def eval_init_poses_or_ground_truth(poses: Union[str, None]) -> Union[List[np.nd
                 poses = [list(pose.values()) for pose in list(poses.values())]
                 poses = [pose for sublist in poses for pose in sublist]
                 return [pose for sublist in poses for pose in sublist]
+            elif "scene_camera.json" in poses:
+                return utils.get_camera_extrinsic_from_blenderproc_bopwriter(path_to_scene_camera_json=poses)
             return [utils.eval_transformation_data(transformation_data=poses)]
         elif poses.lower() == "none":
             return None
         elif poses.lower() == "center":
             return [np.asarray("center")]
         return [utils.eval_transformation_data(transformation_data=pose) for pose in sorted(glob.glob(poses))]
+
+
+def eval_camera_intrinsic(camera_intrinsic: Union[str, None]) -> Union[utils.PinholeCameraIntrinsic,
+                                                                       List[utils.PinholeCameraIntrinsic], None]:
+    if camera_intrinsic is None:
+        return None
+    try:
+        camera_intrinsic = eval(camera_intrinsic)
+        if not isinstance(camera_intrinsic, (list, tuple)):
+            raise NameError
+        return camera_intrinsic
+    except (NameError, SyntaxError):
+        if os.path.exists(camera_intrinsic):
+            return camera_intrinsic
+        elif camera_intrinsic.lower() == "none":
+            return None
+        return [utils.get_camera_intrinsic_from_blenderproc_bopwriter(path_to_camera_json=ci) for ci in sorted(glob.glob(camera_intrinsic))]
+
+
+def eval_source_or_target_params(params: SectionProxy) -> Dict[str, Any]:
+    number_of_points = eval_number_of_points(params.get("number_of_points"))
+    camera_intrinsic = eval_camera_intrinsic(params.get("camera_intrinsic"))
+    camera_extrinsic = eval_init_poses_or_ground_truth(params.get("camera_extrinsic"))
+    sample_type = eval_sample_type(params.get("sample_type"))
+    kwargs = {"depth_scale": params.getfloat("depth_scale"),
+              "depth_trunc": params.getfloat("depth_trunc")}
+    if number_of_points is not None:
+        kwargs["number_of_points"] = number_of_points
+    if camera_intrinsic is not None:
+        kwargs["camera_intrinsic"] = camera_intrinsic
+    if camera_extrinsic is not None:
+        kwargs["camera_extrinsic"] = camera_extrinsic
+    if sample_type is not None:
+        kwargs["sample_type"] = sample_type
+    return kwargs
 
 
 def run(config_dict: Union[dict, None] = None):
@@ -252,35 +295,21 @@ def run(config_dict: Union[dict, None] = None):
     target_data = data.get("target_files")
     try:
         source_data = eval(source_data)
-    except NameError:
+    except (NameError, SyntaxError):
         source_data = [source_data] if os.path.exists(source_data) else sorted(glob.glob(source_data))
     try:
         target_data = eval(data.get("target_files"))
-    except NameError:
+    except (NameError, SyntaxError):
         target_data = [target_data] if os.path.exists(target_data) else sorted(glob.glob(target_data))
 
     # Load source and target data
     logger.debug("Loading source data.")
-    params = config["source_params"]
-    number_of_points = eval_number_of_points(params.get("number_of_points"))
-    camera_intrinsic = params.get("camera_intrinsic")
-    camera_intrinsic = None if camera_intrinsic == "none" else eval(camera_intrinsic)
-    sample_type = eval_sample_type(params.get("sample_type"))
-    source_list = utils.eval_data_parallel(data=source_data,
-                                           number_of_points=number_of_points,
-                                           camera_intrinsic=camera_intrinsic,
-                                           sample_type=sample_type)
+    kwargs = eval_source_or_target_params(params=config["source_params"])
+    source_list = utils.eval_data_parallel(data=source_data, **kwargs)
 
     logger.debug("Loading target data.")
-    params = config["target_params"]
-    number_of_points = eval_number_of_points(params.get("number_of_points"))
-    camera_intrinsic = params.get("camera_intrinsic")
-    camera_intrinsic = None if camera_intrinsic == "none" else eval(camera_intrinsic)
-    sample_type = eval_sample_type(params.get("sample_type"))
-    target_list = utils.eval_data_parallel(data=target_data,
-                                           number_of_points=number_of_points,
-                                           camera_intrinsic=camera_intrinsic,
-                                           sample_type=sample_type)
+    kwargs = eval_source_or_target_params(params=config["target_params"])
+    target_list = utils.eval_data_parallel(data=target_data, **kwargs)
 
     # Process source and target data
     logger.debug("Processing source data.")
@@ -321,7 +350,7 @@ def run(config_dict: Union[dict, None] = None):
     results = list()
     init_list = eval_init_poses_or_ground_truth(data.get("init_poses"))
     if initializer is not None:
-        logger.debug(f"Running initializer {initializer._name}.")
+        logger.debug(f"Running initializer {initializer.name}.")
         params = config["feature_processing"]
         results = initializer.run_many(source_list=source_list,
                                        target_list=target_list,
@@ -335,7 +364,7 @@ def run(config_dict: Union[dict, None] = None):
                                        search_param_radius=params.getfloat("search_param_radius"))
         init_list = [result.transformation for result in results]
     if refiner is not None:
-        logger.debug(f"Running refiner {refiner._name}.")
+        logger.debug(f"Running refiner {refiner.name}.")
         results = refiner.run_many(source_list=source_list,
                                    target_list=target_list,
                                    init_list=init_list,
@@ -358,6 +387,8 @@ def run(config_dict: Union[dict, None] = None):
     if algorithms.getboolean("one_vs_one"):
         assert len(results) == len(source_list) == len(target_list)
         if ground_truth is not None:
+            if len(ground_truth) == 1:
+                ground_truth *= len(results)
             assert len(ground_truth) == len(results)
         for i in range(len(results)):
             names.append(f"s{i} - t{i}")
@@ -370,14 +401,16 @@ def run(config_dict: Union[dict, None] = None):
     else:
         assert len(results) == len(source_list) * len(target_list)
         if ground_truth is not None:
+            if len(ground_truth) == 1:
+                ground_truth *= len(results)
             assert len(ground_truth) == len(results)
         estimates = [T.transformation for T in results]
         for i in range(len(target_list)):
             for j in range(len(source_list)):
                 names.append(f"s{j} - t{i}")
                 if ground_truth is not None:
-                    errors.append(utils.get_transformation_error(estimates.pop(),
-                                                                 ground_truth.pop(),
+                    errors.append(utils.get_transformation_error(estimates.pop(0),
+                                                                 ground_truth.pop(0),
                                                                  in_degrees=options.getboolean("use_degrees")))
                 else:
                     errors.append(('?', '?'))
@@ -408,7 +441,7 @@ def run(config_dict: Union[dict, None] = None):
     if _return == "all":
         return {"names": names,
                 "results": results,
-                "transforms": [result.transformation for result in results],
+                "transformations": [result.transformation for result in results],
                 "errors_rot": errors_rot,
                 "errors_trans": errors_trans}
     else:
@@ -417,8 +450,8 @@ def run(config_dict: Union[dict, None] = None):
             return_data["names"] = names
         if "results" in _return:
             return_data["results"] = results
-        if "transforms" in _return:
-            return_data["transforms"] = [result.transformation for result in results]
+        if "transformations" in _return:
+            return_data["transformations"] = [result.transformation for result in results]
         if "errors_rot" in _return:
             return_data["errors_rot"] = errors_rot
         if "errors_trans" in _return:

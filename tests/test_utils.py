@@ -142,7 +142,7 @@ class TestProcessPointCloud:
         t2 = np.array([1.3, 2.0, 5.7, 1.0])
         t3 = np.array([[1.3, 2.0, 5.7, 1.0]])
         for t in [t1, t2, t3]:
-            _point_cloud = utils.process_point_cloud(point_cloud=point_cloud_orig, transform=t)
+            _point_cloud = utils.process_point_cloud(point_cloud=point_cloud_orig, transformation=t)
             assert np.allclose(_point_cloud.get_center(), point_cloud_orig.get_center() + t.ravel()[:3])
             assert _point_cloud is not point_cloud_orig
 
@@ -152,7 +152,7 @@ class TestProcessPointCloud:
         r2 = np.array(r1)
         r3 = r2.flatten().tolist()
         for r in [r1, r2, r3]:
-            _point_cloud = utils.process_point_cloud(point_cloud=point_cloud_orig, transform=r)
+            _point_cloud = utils.process_point_cloud(point_cloud=point_cloud_orig, transformation=r)
             assert _point_cloud is not point_cloud_orig
             assert not np.allclose(np.asarray(_point_cloud.points), np.asarray(point_cloud_orig.points))
 

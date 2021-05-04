@@ -56,7 +56,7 @@ Feature = o3d.pipelines.registration.Feature
 ImageTypes = Union[Image, RGBDImage, np.ndarray, str]
 RGBDImageTypes = Union[ImageTypes, List[ImageTypes]]
 InputTypes = Union[PointCloud, TriangleMesh, RGBDImageTypes]
-CameraTypes = Union[np.ndarray, PinholeCameraIntrinsic, PinholeCameraIntrinsicParameters]
+CameraTypes = Union[list, np.ndarray, PinholeCameraIntrinsic, PinholeCameraIntrinsicParameters]
 TransformationTypes = Union[np.ndarray, List[float], List[List[float]], str]
 
 logger = logging.getLogger(__name__)
@@ -115,7 +115,7 @@ def eval_data(data: InputTypes,
     if isinstance(data, PointCloud):
         logger.debug("Data is point cloud. Returning.")
         return data
-    elif isinstance(data, Image) and camera_intrinsic is not None:
+    elif isinstance(data, (Image, str)) and camera_intrinsic is not None:
         logger.debug("Trying to convert depth image to point cloud.")
         return convert_depth_image_to_point_cloud(image_or_path=data,
                                                   camera_intrinsic=camera_intrinsic,
@@ -158,24 +158,36 @@ def eval_data(data: InputTypes,
 
 def eval_data_parallel(data: List[InputTypes],
                        number_of_points: Union[List[int], int, None] = None,
-                       camera_intrinsic: Union[np.ndarray, list, None] = None,
+                       camera_intrinsic: Union[CameraTypes, List[CameraTypes], None] = None,
+                       camera_extrinsic: Union[list, np.ndarray, List[list], List[np.ndarray], None] = None,
                        num_threads: int = cpu_count(),
                        **kwargs: Any) -> List[PointCloud]:
+    np_is_list = False
     if isinstance(number_of_points, list):
         assert len(number_of_points) == len(data)
-        is_list = True
-    else:
-        is_list = False
+        np_is_list = True
+    ci_is_list = False
+    if isinstance(camera_intrinsic, list):
+        if isinstance(camera_intrinsic[0], (list, np.ndarray)):
+            assert len(camera_intrinsic) == len(data)
+            ci_is_list = True
+    ce_is_list = False
+    if isinstance(camera_extrinsic, list):
+        if isinstance(camera_extrinsic[0], (list, np.ndarray)):
+            assert len(camera_extrinsic) == len(data)
+            ce_is_list = True
     if len(data) == 1:
         return [eval_data(data=data[0],
-                          number_of_points=number_of_points.pop() if is_list else number_of_points,
-                          camera_intrinsic=camera_intrinsic,
+                          number_of_points=number_of_points.pop(0) if np_is_list else number_of_points,
+                          camera_intrinsic=camera_intrinsic.pop(0) if ci_is_list else camera_intrinsic,
+                          camera_extrinsic=camera_extrinsic.pop(0) if ce_is_list else camera_extrinsic,
                           **kwargs)]
     parallel = Parallel(n_jobs=min(num_threads, len(data)), prefer="threads")
     return parallel(delayed(eval_data)(data=d,
-                                       number_of_points=number_of_points.pop() if is_list else number_of_points,
-                                       camera_intrinsic=camera_intrinsic,
-                                       **kwargs) for d in data)
+                                       number_of_points=number_of_points.pop(0) if np_is_list else number_of_points,
+                                       camera_intrinsic=camera_intrinsic.pop(0) if ci_is_list else camera_intrinsic,
+                                       camera_extrinsic=camera_extrinsic.pop(0) if ce_is_list else camera_extrinsic,
+                                       **kwargs) for i, d in enumerate(data))
 
 
 def process_point_cloud(point_cloud: PointCloud,
@@ -183,7 +195,7 @@ def process_point_cloud(point_cloud: PointCloud,
                         downsample_factor: Union[float, int] = 1,
                         remove_outlier: OutlierTypes = OutlierTypes.NONE,
                         outlier_std_ratio: float = 1.0,
-                        transform: [np.ndarray, list, None] = None,
+                        transformation: [np.ndarray, list, None] = None,
                         scale: float = 1.0,
                         estimate_normals: bool = False,
                         recalculate_normals: bool = False,
@@ -217,7 +229,7 @@ def process_point_cloud(point_cloud: PointCloud,
                            `DownsampleType.VOXEL`.
         remove_outlier: Remove outlier vertices based on radius density or variance.
         outlier_std_ratio: Standard deviation for statistical outlier removal. Smaller removes more vertices.
-        transform: Homogeneous transformation. Also accepts translation vector or rotation matrix.
+        transformation: Homogeneous transformation. Also accepts translation vector or rotation matrix.
         scale: Scales the point cloud.
         estimate_normals: Estimate vertex normals.
         recalculate_normals: Recalculate normals if the point cloud already has normals.
@@ -262,8 +274,8 @@ def process_point_cloud(point_cloud: PointCloud,
             raise ValueError(f"`remove_outlier` needs to be one of `OutlierTypes` but is {type(remove_outlier)}.")
         logger.debug(f"Removed {num_points - len(np.asarray(_point_cloud.points))} outliers.")
 
-    if transform is not None:
-        _transform = np.asarray(transform)
+    if transformation is not None:
+        _transform = np.asarray(transformation)
         if _transform.size in [3, 4]:
             _point_cloud.translate(translation=_transform.ravel()[:3], relative=True)
         elif _transform.size == 9:
@@ -272,8 +284,8 @@ def process_point_cloud(point_cloud: PointCloud,
         elif _transform.size == 16:
             _point_cloud.transform(_transform.reshape(4, 4))
         else:
-            raise ValueError("`transform` needs to be a valid translation, rotation or transformation in natural or"
-                             "homogeneous coordinates, i.e. of size 3, 4, 9 or 16.")
+            raise ValueError("`transformation` needs to be a valid translation, rotation or transformation in natural"
+                             "or homogeneous coordinates, i.e. of size 3, 4, 9 or 16.")
 
     if scale != 1.0:
         logger.debug(f"Scaling point cloud with factor {scale}.")
@@ -352,17 +364,17 @@ def process_point_cloud_parallel(point_cloud_list: List[PointCloud],
     Returns:
         A list of processed point clouds.
     """
-    transform_list = kwargs.get("transform_list")
-    if transform_list is not None:
-        assert len(transform_list) == len(point_cloud_list), f"Number of point clouds and transformations must match."
+    transformation_list = kwargs.get("transformation_list")
+    if transformation_list is not None:
+        assert len(transformation_list) == len(point_cloud_list), f"Number of point clouds and transforms must match."
     else:
-        transform_list = [np.eye(4)] * len(point_cloud_list)
+        transformation_list = [np.eye(4)] * len(point_cloud_list)
     if len(point_cloud_list) == 1:
         return [process_point_cloud(point_cloud=point_cloud_list[0], **kwargs)]
     parallel = Parallel(n_jobs=min(num_threads, len(point_cloud_list)), prefer="threads")
     return parallel(delayed(process_point_cloud)(point_cloud=pcd,
                                                  transformation=T,
-                                                 **kwargs) for pcd, T in zip(point_cloud_list, transform_list))
+                                                 **kwargs) for pcd, T in zip(point_cloud_list, transformation_list))
 
 
 def read_point_cloud(filename: str, **kwargs: Any) -> PointCloud:
@@ -547,13 +559,8 @@ def eval_image_type(image_or_path: RGBDImageTypes, **kwargs: Any) -> Union[Image
         else:
             raise TypeError(f"Image type {type(image_or_path)} not supported.")
 
-        if len(color_or_depth.shape) == 2:
-            return Image(image_or_path)
-        elif len(color_or_depth.shape) == 3:
-            if color_or_depth.shape[2] == 3:
-                return Image(image_or_path)
-            if color_or_depth.shape[2] == 4:
-                return get_rgbd_image(color=image_or_path, **kwargs)
+        if len(color_or_depth.shape) in [2, 3]:
+            return Image(color_or_depth)
         else:
             raise ValueError(f"Input shape must be WxH, WxHx3 or WxHx4 but is {color_or_depth.shape}.")
 
@@ -570,8 +577,10 @@ def eval_camera_intrinsic_type(image_or_path: ImageTypes, camera_intrinsic: Came
     """
     if isinstance(camera_intrinsic, (PinholeCameraIntrinsic, PinholeCameraIntrinsicParameters)):
         return camera_intrinsic
-    elif isinstance(camera_intrinsic, (np.ndarray, list)):
+    elif isinstance(camera_intrinsic, (np.ndarray, list, tuple)):
         return get_camera_intrinsic_from_array(image_or_path=image_or_path, camera_intrinsic=camera_intrinsic)
+    elif isinstance(camera_intrinsic, str):
+        return get_camera_intrinsic_from_blenderproc_bopwriter(path_to_camera_json=camera_intrinsic)
     else:
         raise TypeError(f"Camera intrinsic type {type(camera_intrinsic)} not supported.")
 
@@ -821,38 +830,17 @@ def get_ground_truth_pose_from_blenderproc_bopwriter(path_to_scene_gt_json: str,
     return gt_dict
 
 
-def get_camera_parameters_from_blenderproc_bopwriter(scene_id: Union[int, str],
-                                                     path_to_scene_camera_json: str,
-                                                     path_to_camera_json: str,
-                                                     output_path: Union[str, None] = None,
-                                                     mm_to_m: bool = True) -> PinholeCameraParameters:
-    """Constructs intrinsic and extrinsic camera parameter object from BlenderProc BopWriter data.
+def get_camera_intrinsic_from_blenderproc_bopwriter(path_to_camera_json: str,
+                                                    output_path: Union[str, None] = None) -> PinholeCameraIntrinsic:
+    """Constructs intrinsic camera parameter object from BlenderProc BopWriter data.
 
     Args:
-        scene_id: The ID of the rendered scene.
-        path_to_scene_camera_json: The path to the camera JSON file holding the extrinsic camera parameters of the
-                                   selected scene.
         path_to_camera_json: The path to the camera JSON file holding the camera intrinsic parameters.
-        output_path: Optional output path, where the resulting intrinsic and extrinsic camera parameters are stored.
-        mm_to_m: Transform BlenderProc BopWriter data in millimeter scale to meter scale.
+        output_path: Optional output path, where the resulting intrinsic camera parameters are stored.
 
     Returns:
-        The camera intrinsic and extrinsic parameter object.
+        The camera intrinsic parameter object.
     """
-    scene_id = str(scene_id)
-
-    # Get camera extrinsic
-    with open(path_to_scene_camera_json) as f:
-        extrinsic_data = json.load(f)
-
-    R_w2c = np.asarray(extrinsic_data[scene_id]['cam_R_w2c']).reshape(3, 3)
-    t_w2c = np.asarray(extrinsic_data[scene_id]['cam_t_w2c']) / (1000.0 if mm_to_m else 1.0)
-    T_w2c = np.eye(4)
-    T_w2c[:3, :3] = R_w2c
-    T_w2c[:3, 3] = t_w2c
-    extrinsic = T_w2c
-
-    # Get camera intrinsic
     with open(path_to_camera_json) as f:
         intrinsic_data = json.load(f)
 
@@ -861,19 +849,89 @@ def get_camera_parameters_from_blenderproc_bopwriter(scene_id: Union[int, str],
     fx, fy = intrinsic_data['fx'], intrinsic_data['fy']
     intrinsic = PinholeCameraIntrinsic(width=width, height=height, fx=fx, fy=fy, cx=cx, cy=cy)
 
-    # Set camera parameters
-    camera_parameters = PinholeCameraParameters()
-    camera_parameters.intrinsic = intrinsic
-    camera_parameters.extrinsic = extrinsic
-
-    # Maybe write to file
     if output_path is not None:
         o3d.io.write_pinhole_camera_intrinsic(filename=os.path.join(output_path, "camera_intrinsic.json"),
-                                              intrinsic=camera_parameters.intrinsic)
-        o3d.io.write_pinhole_camera_parameters(filename=os.path.join(output_path, "camera_parameters.json"),
-                                               parameters=camera_parameters)
+                                              intrinsic=intrinsic)
+    return intrinsic
 
-    return camera_parameters
+
+def get_camera_extrinsic_from_blenderproc_bopwriter(path_to_scene_camera_json: str,
+                                                    scene_id: Union[int, str, List[int], List[str]] = -1,
+                                                    mm_to_m: bool = True) -> List[np.ndarray]:
+    """Reads camera extrinsic transform from BlenderProc Bopwriter data.
+
+    Args:
+        path_to_scene_camera_json: The path to the camera JSON file holding the extrinsic camera parameters of the
+                                   selected scene.
+        scene_id: The ID(s) of the rendered scene(s). Returns all scenes if set to -1.
+        mm_to_m: Transform BlenderProc BopWriter data in millimeter scale to meter scale.
+
+    Returns:
+        List of 4x4 camera extrinsic transformations for each requested scene.
+    """
+    with open(path_to_scene_camera_json) as f:
+        extrinsic_data = json.load(f)
+
+    if int(scene_id) == -1:
+        scene_id = [str(sid) for sid in extrinsic_data.keys()]
+    else:
+        scene_id = [str(sid) for sid in scene_id] if isinstance(scene_id, list) else [str(scene_id)]
+
+    camera_extrinsic_list = list()
+    for sid in scene_id:
+        R_w2c = np.asarray(extrinsic_data[sid]['cam_R_w2c']).reshape(3, 3)
+        t_w2c = np.asarray(extrinsic_data[sid]['cam_t_w2c']) / (1000.0 if mm_to_m else 1.0)
+        T_w2c = np.eye(4)
+        T_w2c[:3, :3] = R_w2c
+        T_w2c[:3, 3] = t_w2c
+        extrinsic = T_w2c
+        camera_extrinsic_list.append(extrinsic)
+    return camera_extrinsic_list
+
+
+def get_camera_parameters_from_blenderproc_bopwriter(path_to_scene_camera_json: str,
+                                                     path_to_camera_json: str,
+                                                     scene_id: Union[int, str, List[int], List[str]] = -1,
+                                                     output_path: Union[str, None] = None,
+                                                     mm_to_m: bool = True) -> List[PinholeCameraParameters]:
+    """Constructs intrinsic and extrinsic camera parameter object from BlenderProc BopWriter data.
+
+    Args:
+        path_to_scene_camera_json: The path to the camera JSON file holding the extrinsic camera parameters of the
+                                   selected scene.
+        path_to_camera_json: The path to the camera JSON file holding the camera intrinsic parameters.
+        scene_id: The ID(s) of the rendered scene(s). Returns all scenes if set to -1.
+        output_path: Optional output path, where the resulting intrinsic and extrinsic camera parameters are stored.
+        mm_to_m: Transform BlenderProc BopWriter data in millimeter scale to meter scale.
+
+    Returns:
+        The camera intrinsic and extrinsic parameter object for each requested scene.
+    """
+    intrinsic = get_camera_intrinsic_from_blenderproc_bopwriter(path_to_camera_json=path_to_camera_json,
+                                                                output_path=output_path)
+    extrinsics = get_camera_extrinsic_from_blenderproc_bopwriter(scene_id=scene_id,
+                                                                 path_to_scene_camera_json=path_to_scene_camera_json,
+                                                                 mm_to_m=mm_to_m)
+    with open(path_to_scene_camera_json) as f:
+        extrinsic_data = json.load(f)
+
+    if int(scene_id) == -1:
+        scene_id = [str(sid) for sid in extrinsic_data.keys()]
+    else:
+        scene_id = [str(sid) for sid in scene_id] if isinstance(scene_id, list) else [str(scene_id)]
+
+    camera_parameters_list = list()
+    for scene, extrinsic in zip(scene_id, extrinsics):
+        camera_parameters = PinholeCameraParameters()
+        camera_parameters.intrinsic = intrinsic
+        camera_parameters.extrinsic = extrinsic
+        camera_parameters_list.append(camera_parameters)
+
+        if output_path is not None:
+            o3d.io.write_pinhole_camera_parameters(filename=os.path.join(output_path,
+                                                                         f"camera_parameters_scene_{scene}.json"),
+                                                   parameters=camera_parameters)
+    return camera_parameters_list
 
 
 """
