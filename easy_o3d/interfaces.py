@@ -489,16 +489,25 @@ class RegistrationInterface(ABC):
             source_target_list = self._eval_data_parallel(source_list + target_list)
             source_list, target_list = source_target_list[:len(source_list)], source_target_list[len(source_list):]
 
+        is_list = True
+        if init_list is None:
+            init_list = np.eye(4)
+            is_list = False
+        elif isinstance(init_list, str):
+            if init_list.lower() == "center":
+                is_list = False
+        # A single rotation, translation or transformation in natural or homogeneous coordinates
+        if np.asarray(init_list).size in [3, 4, 6, 9, 12, 16] and all(isinstance(value, (float, int)) for value in init_list):
+            is_list = False
+            # A single transformation with Euler, quaternion or matrix rotation and translation in natural or
+            # homogeneous coordinates
+        elif len(init_list) == 2 and np.asarray(init_list[0]).size in [3, 4, 9] and np.asarray(init_list[1]).size in [3, 4]:
+            is_list = False
+
         results = list()
         if one_vs_one and len(source_list) == len(target_list):
-            is_list = False
-            init_list = np.eye(4) if init_list is None else init_list
-            if isinstance(init_list, list):
-                if len(init_list) > 1:
-                    assert len(init_list) == len(source_list)
-                    is_list = True
-                else:
-                    init_list = init_list[0]
+            if is_list:
+                assert len(init_list) == len(source_list)
             for source, target in zip(source_list, target_list):
                 if n_times == 1:
                     if multi_scale:
@@ -521,14 +530,8 @@ class RegistrationInterface(ABC):
         else:
             if one_vs_one:
                 logger.warning(f"Source and target list have unequal length which is required for `one_vs_one`.")
-            is_list = False
-            init_list = np.eye(4) if init_list is None else init_list
-            if isinstance(init_list, list):
-                if len(init_list) > 1:
-                    assert len(init_list) == len(source_list) * len(target_list)
-                    is_list = True
-                else:
-                    init_list = init_list[0]
+            if is_list:
+                assert len(init_list) == len(source_list) * len(target_list)
             for target in target_list:
                 for source in source_list:
                     if n_times == 1:

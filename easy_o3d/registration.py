@@ -47,7 +47,6 @@ class CheckerTypes:
 
 class KernelTypes:
     """Supported ICP Point-To-Plane robust kernel types."""
-    NONE = None
     TUKEY = o3d.pipelines.registration.TukeyLoss
     CAUCHY = o3d.pipelines.registration.CauchyLoss
     L1 = o3d.pipelines.registration.L1Loss
@@ -90,7 +89,7 @@ class IterativeClosestPoint(RegistrationInterface):
                  max_correspondence_distance: float = 0.004,  # 4mm
                  estimation_method: ICPTypes = ICPTypes.POINT,
                  with_scaling: bool = False,
-                 kernel: KernelTypes = KernelTypes.NONE,
+                 kernel: Union[KernelTypes, None] = None,
                  kernel_noise_std: float = 0.1,
                  data_to_cache: Union[Dict[Any, InputTypes], None] = None) -> None:
         """
@@ -182,7 +181,7 @@ class IterativeClosestPoint(RegistrationInterface):
             self._estimation_method = PointToPoint(with_scaling=kwargs.get("with_scaling", self.with_scaling))
         elif self.estimation_method == ICPTypes.PLANE:
             kernel = kwargs.get("kernel", self.kernel)
-            if kernel != KernelTypes.NONE:
+            if kernel is not None:
                 kernel = kernel(k=kwargs.get("kernel_noise_std", self.kernel_noise_std))
                 self._estimation_method = PointToPlane(kernel=kernel)
             else:
@@ -457,7 +456,7 @@ class RANSAC(RegistrationInterface):
                  max_correspondence_distance: float = 0.015,  # 1.5cm
                  estimation_method: ICPTypes = ICPTypes.POINT,
                  with_scaling: bool = False,
-                 kernel: KernelTypes = KernelTypes.NONE,
+                 kernel: Union[KernelTypes, None] = None,
                  kernel_noise_std: float = 0.1,
                  ransac_n: int = 3,
                  checkers: Union[List[CheckerTypes], Tuple[CheckerTypes]] = (CheckerTypes.EDGE, CheckerTypes.DISTANCE),
@@ -576,7 +575,7 @@ class RANSAC(RegistrationInterface):
             self._estimation_method = PointToPoint(with_scaling=kwargs.get("with_scaling", self.with_scaling))
         elif self.estimation_method == ICPTypes.PLANE:
             kernel = kwargs.get("kernel", self.kernel)
-            if kernel != KernelTypes.NONE:
+            if kernel is not None:
                 kernel = kernel(k=kwargs.get("kernel_noise_std", self.kernel_noise_std))
                 self._estimation_method = PointToPlane(kernel=kernel)
             else:

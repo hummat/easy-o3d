@@ -56,7 +56,7 @@ Feature = o3d.pipelines.registration.Feature
 ImageTypes = Union[Image, RGBDImage, np.ndarray, str]
 RGBDImageTypes = Union[ImageTypes, List[ImageTypes]]
 InputTypes = Union[PointCloud, TriangleMesh, RGBDImageTypes]
-CameraTypes = Union[list, np.ndarray, PinholeCameraIntrinsic, PinholeCameraIntrinsicParameters]
+CameraTypes = Union[list, np.ndarray, PinholeCameraIntrinsic, PinholeCameraIntrinsicParameters, str]
 TransformationTypes = Union[np.ndarray, List[float], List[List[float]], str]
 
 logger = logging.getLogger(__name__)
@@ -70,7 +70,6 @@ class SampleTypes(Flag):
 
 class DownsampleTypes(Flag):
     """Supported point cloud downsampling types."""
-    NONE = auto()
     VOXEL = auto()
     RANDOM = auto()
     UNIFORM = auto()
@@ -78,7 +77,6 @@ class DownsampleTypes(Flag):
 
 class OutlierTypes(Flag):
     """Supported outlier removal types."""
-    NONE = auto()
     STATISTICAL = auto()
     RADIUS = auto()
 
@@ -92,7 +90,6 @@ class SearchParamTypes(Flag):
 
 class OrientationTypes(Flag):
     """Supported normal orientation types."""
-    NONE = auto()
     TANGENT_PLANE = auto()
     CAMERA = auto()
     DIRECTION = auto()
@@ -157,43 +154,24 @@ def eval_data(data: InputTypes,
 
 
 def eval_data_parallel(data: List[InputTypes],
-                       number_of_points: Union[List[int], int, None] = None,
-                       camera_intrinsic: Union[CameraTypes, List[CameraTypes], None] = None,
-                       camera_extrinsic: Union[list, np.ndarray, List[list], List[np.ndarray], None] = None,
                        num_threads: int = cpu_count(),
                        **kwargs: Any) -> List[PointCloud]:
-    np_is_list = False
-    if isinstance(number_of_points, list):
-        assert len(number_of_points) == len(data)
-        np_is_list = True
-    ci_is_list = False
-    if isinstance(camera_intrinsic, list):
-        if isinstance(camera_intrinsic[0], (list, np.ndarray)):
-            assert len(camera_intrinsic) == len(data)
-            ci_is_list = True
-    ce_is_list = False
-    if isinstance(camera_extrinsic, list):
-        if isinstance(camera_extrinsic[0], (list, np.ndarray)):
-            assert len(camera_extrinsic) == len(data)
-            ce_is_list = True
+    kwargs_list = list()
+    for i, d in enumerate(data):
+        kwargs_dict = {"data": d}
+        for key, value in kwargs.items():
+            kwargs_dict[key] = value[i] if isinstance(value, list) else value
+        kwargs_list.append(kwargs_dict)
     if len(data) == 1:
-        return [eval_data(data=data[0],
-                          number_of_points=number_of_points.pop(0) if np_is_list else number_of_points,
-                          camera_intrinsic=camera_intrinsic.pop(0) if ci_is_list else camera_intrinsic,
-                          camera_extrinsic=camera_extrinsic.pop(0) if ce_is_list else camera_extrinsic,
-                          **kwargs)]
+        return [eval_data(**kwargs_list[0])]
     parallel = Parallel(n_jobs=min(num_threads, len(data)), prefer="threads")
-    return parallel(delayed(eval_data)(data=d,
-                                       number_of_points=number_of_points.pop(0) if np_is_list else number_of_points,
-                                       camera_intrinsic=camera_intrinsic.pop(0) if ci_is_list else camera_intrinsic,
-                                       camera_extrinsic=camera_extrinsic.pop(0) if ce_is_list else camera_extrinsic,
-                                       **kwargs) for i, d in enumerate(data))
+    return parallel(delayed(eval_data)(**params) for params in kwargs_list)
 
 
 def process_point_cloud(point_cloud: PointCloud,
-                        downsample: DownsampleTypes = DownsampleTypes.NONE,
+                        downsample: Union[DownsampleTypes, None] = None,
                         downsample_factor: Union[float, int] = 1,
-                        remove_outlier: OutlierTypes = OutlierTypes.NONE,
+                        remove_outlier: Union[OutlierTypes, None] = None,
                         outlier_std_ratio: float = 1.0,
                         transformation: [np.ndarray, list, None] = None,
                         scale: float = 1.0,
@@ -201,9 +179,9 @@ def process_point_cloud(point_cloud: PointCloud,
                         recalculate_normals: bool = False,
                         fast_normal_computation: bool = True,
                         normalize_normals: bool = False,
-                        orient_normals: OrientationTypes = OrientationTypes.NONE,
+                        orient_normals: Union[OrientationTypes, None] = None,
                         compute_feature: bool = False,
-                        search_param: SearchParamTypes = SearchParamTypes.HYBRID,
+                        search_param: Union[SearchParamTypes, None] = None,
                         search_param_knn: int = 30,
                         search_param_radius: float = 0.02,  # 2cm
                         camera_location_or_direction: [np.ndarray, list] = np.zeros(3),
@@ -248,7 +226,7 @@ def process_point_cloud(point_cloud: PointCloud,
     """
     start = time.time()
     _point_cloud = copy.deepcopy(point_cloud)
-    if downsample != DownsampleTypes.NONE:
+    if downsample is not None:
         logger.debug(f"{downsample} downsampling point cloud with factor {downsample_factor}.")
         logger.debug(f"Number of points before downsampling: {len(np.asarray(_point_cloud.points))}")
         if downsample == DownsampleTypes.VOXEL:
@@ -263,7 +241,7 @@ def process_point_cloud(point_cloud: PointCloud,
             raise ValueError(f"`downsample` needs to by one of `DownsampleTypes` but is {type(downsample)}.")
         logger.debug(f"Number of points after downsampling: {len(np.asarray(_point_cloud.points))}")
 
-    if remove_outlier != OutlierTypes.NONE:
+    if remove_outlier is not None:
         num_points = len(np.asarray(_point_cloud.points))
         if remove_outlier == OutlierTypes.STATISTICAL:
             _point_cloud, _ = _point_cloud.remove_statistical_outlier(nb_neighbors=search_param_knn,
@@ -294,7 +272,7 @@ def process_point_cloud(point_cloud: PointCloud,
         # FIXME: Open3D factory `scale` function doesn't do anything.
         # _point_cloud = _point_cloud.scale(scale=scale, center=_point_cloud.get_center())
 
-    if estimate_normals or compute_feature:
+    if (estimate_normals or compute_feature) and search_param is not None:
         if search_param == SearchParamTypes.KNN:
             _search_param = o3d.geometry.KDTreeSearchParamKNN(knn=search_param_knn)
         elif search_param == SearchParamTypes.RADIUS:
@@ -318,7 +296,7 @@ def process_point_cloud(point_cloud: PointCloud,
         else:
             logger.warning("Point cloud doesnt' have normals so can't normalize them.")
 
-    if orient_normals != OrientationTypes.NONE:
+    if orient_normals is not None:
         assert _point_cloud.has_normals(), "Point cloud doesn't have normals which could be oriented."
         logger.debug(f"Orienting normals towards {orient_normals}.")
         if orient_normals == OrientationTypes.TANGENT_PLANE:
@@ -364,17 +342,16 @@ def process_point_cloud_parallel(point_cloud_list: List[PointCloud],
     Returns:
         A list of processed point clouds.
     """
-    transformation_list = kwargs.get("transformation_list")
-    if transformation_list is not None:
-        assert len(transformation_list) == len(point_cloud_list), f"Number of point clouds and transforms must match."
-    else:
-        transformation_list = [np.eye(4)] * len(point_cloud_list)
+    kwargs_list = list()
+    for i, point_cloud in enumerate(point_cloud_list):
+        kwargs_dict = {"point_cloud": point_cloud}
+        for key, value in kwargs.items():
+            kwargs_dict[key] = value[i] if isinstance(value, list) else value
+        kwargs_list.append(kwargs_dict)
     if len(point_cloud_list) == 1:
-        return [process_point_cloud(point_cloud=point_cloud_list[0], **kwargs)]
+        return [process_point_cloud(**kwargs_list[0])]
     parallel = Parallel(n_jobs=min(num_threads, len(point_cloud_list)), prefer="threads")
-    return parallel(delayed(process_point_cloud)(point_cloud=pcd,
-                                                 transformation=T,
-                                                 **kwargs) for pcd, T in zip(point_cloud_list, transformation_list))
+    return parallel(delayed(process_point_cloud)(**params) for params in kwargs_list)
 
 
 def read_point_cloud(filename: str, **kwargs: Any) -> PointCloud:
@@ -468,7 +445,7 @@ def sample_point_cloud_from_triangle_mesh(mesh_or_filename: Union[TriangleMesh, 
                                                use_triangle_normal=kwargs.get("use_triangle_normal", False),
                                                seed=kwargs.get("seed", -1))
     else:
-        raise ValueError(f"Sample style {sample_type} not supported.")
+        raise ValueError(f"Sample type {sample_type} not supported.")
 
 
 def get_camera_intrinsic_from_array(image_or_path: ImageTypes,

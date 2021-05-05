@@ -6,404 +6,315 @@ import os
 import numpy as np
 import argparse
 import configparser
-from configparser import SectionProxy
 import logging
 import time
 import glob
 import tabulate
-from typing import List, Union, Dict, Any
+from typing import Union, Dict, Any
 
 logger = logging.getLogger(__name__)
 
 
-def eval_estimation_method(estimation_method: str) -> registration.ICPTypes:
-    if estimation_method.lower() in ["point", "pointtopoint", "point_to_point"]:
-        return registration.ICPTypes.POINT
-    elif estimation_method.lower() in ["plane", "pointtoplane", "point_to_plane"]:
-        return registration.ICPTypes.PLANE
-    elif estimation_method.lower() in ["color", "colored", "coloreicp", "coloredicp", "color_icp", "colored_icp"]:
-        return registration.ICPTypes.COLOR
-    else:
-        raise ValueError(
-            f"`estimation_method` must be `point_to_point`, `point_to_plane` or 'color' but is {estimation_method}.")
+def eval_config(config: configparser.ConfigParser) -> Dict[str, Any]:
+    config_dict = dict()
+    for section in config.sections():
+        config_dict[section] = dict()
+        for option, values in config.items(section):
+            try:
+                values = eval(values)
+                if isinstance(values, list):
+                    if section.lower() in ["source_params", "target_params"]:
+                        if option.lower() == "sample_type":
+                            uniform = utils.SampleTypes.UNIFORMLY
+                            disk = utils.SampleTypes.POISSON_DISK
+                            values = [uniform if "uniform" in value.lower() else disk for value in values]
+                    elif section.lower() in ["feature_processing", "source_processing", "target_processing"]:
+                        if option.lower() == "search_param":
+                            _values = list()
+                            for value in values:
+                                if value.lower() == "hybrid":
+                                    _values.append(utils.SearchParamTypes.HYBRID)
+                                elif value.lower() == "knn":
+                                    _values.append(utils.SearchParamTypes.KNN)
+                                elif value.lower() == "radius":
+                                    _values.append(utils.SearchParamTypes.RADIUS)
+                            values = _values
+                        elif option.lower() == "downsample":
+                            uniform = utils.DownsampleTypes.UNIFORM
+                            voxel = utils.DownsampleTypes.VOXEL
+                            values = [uniform if "uniform" in value.lower() else voxel for value in values]
+                        elif option.lower() == "remove_outlier":
+                            statistic = utils.OutlierTypes.STATISTICAL
+                            radius = utils.OutlierTypes.RADIUS
+                            values = [statistic if "statistic" in value.lower() else radius for value in values]
+                        if option.lower() == "orient_normals":
+                            _values = list()
+                            for value in values:
+                                if value.lower() == "tangent":
+                                    _values.append(utils.OrientationTypes.TANGENT_PLANE)
+                                elif value.lower() == "camera":
+                                    _values.append(utils.OrientationTypes.CAMERA)
+                                elif value.lower() == "direction":
+                                    _values.append(utils.OrientationTypes.DIRECTION)
+                            values = _values
+                    elif section.lower() == "initializer_params":
+                        if option.lower() == "checkers":
+                            _values = list()
+                            for value in values:
+                                if value.lower() == "distance":
+                                    _values.append(registration.CheckerTypes.DISTANCE)
+                                elif value.lower() == "edge":
+                                    _values.append(registration.CheckerTypes.EDGE)
+                                elif value.lower() == "normal":
+                                    _values.append(registration.CheckerTypes.NORMAL)
+            except (NameError, SyntaxError):
+                if values.lower() == "none":
+                    values = None
+                elif section.lower() in ["data", "source_params", "target_params"]:
+                    if option.lower() in ["source_files", "target_files"]:
+                        values = [values] if os.path.exists(values) else sorted(glob.glob(values))
+                    elif option.lower() in ["ground_truth", "init_poses", "camera_intrinsic", "camera_extrinsic"]:
+                        if os.path.exists(values):
+                            if "scene_gt.json" in values.lower():
+                                poses = utils.get_ground_truth_pose_from_blenderproc_bopwriter(values)
+                                poses = [list(pose.values()) for pose in list(poses.values())]
+                                poses = [pose for sublist in poses for pose in sublist]
+                                values = [pose for sublist in poses for pose in sublist]
+                            elif "scene_camera.json" in values.lower():
+                                values = utils.get_camera_extrinsic_from_blenderproc_bopwriter(values)
+                        elif values.lower() != "center":
+                            values = sorted(glob.glob(values))
+                    elif option.lower() == "sample_type":
+                        values = utils.SampleTypes.UNIFORMLY if "uniform" in values.lower() else utils.SampleTypes.POISSON_DISK
+                elif section.lower() in ["feature_processing", "source_processing", "target_processing"]:
+                    if option.lower() == "search_param":
+                        if values.lower() == "hybrid":
+                            values = utils.SearchParamTypes.HYBRID
+                        elif values.lower() == "knn":
+                            values = utils.SearchParamTypes.KNN
+                        elif values.lower() == "radius":
+                            values = utils.SearchParamTypes.RADIUS
+                    elif option.lower() == "downsample":
+                        values = utils.DownsampleTypes.UNIFORM if "uniform" in values else utils.DownsampleTypes.VOXEL
+                    elif option.lower() == "remove_outlier":
+                        values = utils.OutlierTypes.STATISTICAL if "statistic" in values else utils.OutlierTypes.RADIUS
+                    elif option.lower() == "orient_normals":
+                        if values.lower() == "tangent":
+                            values = utils.OrientationTypes.TANGENT_PLANE
+                        elif values.lower() == "camera":
+                            values = utils.OrientationTypes.CAMERA
+                        elif values.lower() == "direction":
+                            values = utils.OrientationTypes.DIRECTION
+                elif section.lower() == "initializer_params":
+                    if option.lower() == "checkers":
+                        if values.lower() == "distance":
+                            values = [registration.CheckerTypes.DISTANCE]
+                        elif values.lower() == "edge":
+                            values = [registration.CheckerTypes.EDGE]
+                        elif values.lower() == "normal":
+                            values = [registration.CheckerTypes.NORMAL]
+                elif section.lower() == "refiner_params":
+                    if option.lower() == "estimation_method":
+                        if values.lower() in ["point", "point_to_point"]:
+                            values = registration.ICPTypes.POINT
+                        elif values.lower() in ["plane", "point_to_plane"]:
+                            values = registration.ICPTypes.PLANE
+                        elif values.lower() in ["color", "colored"]:
+                            values = registration.ICPTypes.COLOR
+                    elif option.lower() == "kernel":
+                        if values.lower() == "tukey":
+                            values = registration.KernelTypes.TUKEY
+                        elif values.lower() == "cauchy":
+                            values = registration.KernelTypes.CAUCHY
+                        elif values.lower() == "l1":
+                            values = registration.KernelTypes.L1
+                        elif values.lower() == "l2":
+                            values = registration.KernelTypes.L2
+                        elif values.lower() == "gm":
+                            values = registration.KernelTypes.GM
+            config_dict[section][option] = values
+    return config_dict
 
 
-def eval_kernel(kernel: Union[str, None]) -> registration.KernelTypes:
-    if kernel is None:
-        return registration.KernelTypes.NONE
-    elif isinstance(kernel, str):
-        if kernel.lower() == "none":
-            return registration.KernelTypes.NONE
-        if kernel.lower() == "tukey":
-            return registration.KernelTypes.TUKEY
-        elif kernel.lower() == "cauchy":
-            return registration.KernelTypes.CAUCHY
-        elif kernel.lower() == "l1":
-            return registration.KernelTypes.L1
-        elif kernel.lower() == "l2":
-            return registration.KernelTypes.L2
-        elif kernel.lower == "gm":
-            return registration.KernelTypes.GM
-        else:
-            raise ValueError(f"`kernel` must be empty or one of 'Tukey', 'Cauchy', 'L1', 'L2' or 'GM' but is {kernel}.")
+def print_config_dict(config_dict: Dict[str, Any], pretty: bool = True) -> None:
+    config_list = list()
+    for section in config_dict.keys():
+        config_list.append(("", ""))
+        config_list.append((section.upper().replace('_', ' ') if pretty else section, ""))
+        config_list.append(('-' * len(section), ""))
+        for key, value in config_dict[section].items():
+            value = str(value)
+            config_list.append((key.capitalize().replace('_', ' ') if pretty else key,
+                                value.capitalize() if value.lower() in ["true", "false", "none"] and pretty else value))
+    print(tabulate.tabulate(config_list))
 
 
-def eval_checkers(checkers: str) -> List[registration.CheckerTypes]:
-    checker_list = list()
-    for checker in eval(checkers):
-        if checker.lower() == "distance":
-            checker_list.append(registration.CheckerTypes.DISTANCE)
-        elif checker.lower() in ["edge", "edgelength", "edge_length"]:
-            checker_list.append(registration.CheckerTypes.EDGE)
-        elif checker.lower() in ["angle", "normal", "normalangle", "normal_angle"]:
-            checker_list.append(registration.CheckerTypes.NORMAL)
-        else:
-            raise ValueError(f"`checkers` need to by in 'distance', 'edge' or 'normal' but are {eval(checkers)}.")
-    return checker_list
-
-
-def eval_number_of_points(number_of_points: str) -> Union[int, List[int], None]:
-    try:
-        _number_of_points = eval(number_of_points)
-        if isinstance(_number_of_points, list):
-            if len(_number_of_points) == 1:
-                return int(_number_of_points[0])
-            return [int(points) for points in _number_of_points]
-        return int(_number_of_points)
-    except (NameError, SyntaxError):
-        return None
-
-
-def eval_downsample(downsample: Union[str, None]) -> utils.DownsampleTypes:
-    if downsample is None:
-        return utils.DownsampleTypes.NONE
-    elif isinstance(downsample, str):
-        if downsample.lower() == "none":
-            return utils.DownsampleTypes.NONE
-        elif downsample.lower() == "voxel":
-            return utils.DownsampleTypes.VOXEL
-        elif downsample.lower() in ["uniform", "uniformly"]:
-            return utils.DownsampleTypes.UNIFORM
-        else:
-            raise ValueError(f"`downsample` must be empty or one of 'none', 'voxel' or 'uniform' but is {downsample}.")
-
-
-def eval_outlier(outlier: Union[str, None]) -> utils.OutlierTypes:
-    if outlier is None:
-        return utils.OutlierTypes.NONE
-    elif isinstance(outlier, str):
-        if outlier.lower() == "none":
-            return utils.OutlierTypes.NONE
-        elif outlier.lower() == "radius":
-            return utils.OutlierTypes.RADIUS
-        elif outlier.lower() in ["statistic", "statistical"]:
-            return utils.OutlierTypes.STATISTICAL
-        else:
-            raise ValueError(f"`outlier` must be empty or one of 'none', 'radius' or 'statistical' but is {outlier}.")
-
-
-def eval_orient_normals(orient_normals: Union[str, None]) -> utils.OrientationTypes:
-    if orient_normals is None:
-        return utils.OrientationTypes.NONE
-    elif isinstance(orient_normals, str):
-        if orient_normals.lower() == "none":
-            return utils.OrientationTypes.NONE
-        elif orient_normals.lower() in ["tangent", "tangentplane", "tangent_plane"]:
-            return utils.OrientationTypes.TANGENT_PLANE
-        elif orient_normals.lower() == "camera":
-            return utils.OrientationTypes.CAMERA
-        elif orient_normals.lower() == "direction":
-            return utils.OrientationTypes.DIRECTION
-        else:
-            raise ValueError(f"`orient_normals` must be empty or one of 'none', 'tangent', 'camera' or 'direction' but"
-                             f"is {orient_normals}.")
-
-
-def eval_sample_type(sample_type: str) -> [utils.SampleTypes, None]:
-    if sample_type.lower() == "none":
-        return None
-    if sample_type.lower() in ["uniform", "uniformly"]:
-        return utils.SampleTypes.UNIFORMLY
-    elif sample_type.lower() in ["poisson", "disk", "poissondisk", "poisson_disk"]:
-        return utils.SampleTypes.POISSON_DISK
-    else:
-        raise ValueError(f"`sample_type` must be one of 'uniformly' or 'poisson_disk' but is {sample_type}.")
-
-
-def eval_search_param(search_param: str) -> utils.SearchParamTypes:
-    if search_param.lower() in ["hybrid", "none"]:
-        return utils.SearchParamTypes.HYBRID
-    elif search_param.lower() in ["knn", "nn", "nearestneighbor", "knearestneighbor", "nearest_neighbor",
-                                  "k_nearest_neighbor"]:
-        return utils.SearchParamTypes.KNN
-    elif search_param.lower() == "radius":
-        return utils.SearchParamTypes.RADIUS
-    else:
-        raise ValueError(f"`search_param` must be one of 'hybrid', 'knn' or 'radius' but is {search_param}.")
-
-
-def eval_init_poses_or_ground_truth(poses: Union[str, None]) -> Union[List[np.ndarray], List[str], None]:
-    if poses is None:
-        return None
-    try:
-        poses = eval(poses)
-        if not isinstance(poses, (list, tuple)):
-            raise NameError
-        if isinstance(poses[0], (int, float)):
-            return [utils.eval_transformation_data(transformation_data=poses)]
-        elif isinstance(poses[0], (list, tuple)):
-            if len(poses[0]) in [3, 4, 9] and all(isinstance(n, (float, int)) for n in poses[0]):
-                return [utils.eval_transformation_data(transformation_data=poses[0])]
-        return [utils.eval_transformation_data(transformation_data=pose) for pose in poses]
-    except (NameError, SyntaxError):
-        if os.path.exists(poses):
-            if "scene_gt.json" in poses:
-                poses = utils.get_ground_truth_pose_from_blenderproc_bopwriter(path_to_scene_gt_json=poses)
-                poses = [list(pose.values()) for pose in list(poses.values())]
-                poses = [pose for sublist in poses for pose in sublist]
-                return [pose for sublist in poses for pose in sublist]
-            elif "scene_camera.json" in poses:
-                return utils.get_camera_extrinsic_from_blenderproc_bopwriter(path_to_scene_camera_json=poses)
-            return [utils.eval_transformation_data(transformation_data=poses)]
-        elif poses.lower() == "none":
-            return None
-        elif poses.lower() == "center":
-            return [np.asarray("center")]
-        return [utils.eval_transformation_data(transformation_data=pose) for pose in sorted(glob.glob(poses))]
-
-
-def eval_camera_intrinsic(camera_intrinsic: Union[str, None]) -> Union[utils.PinholeCameraIntrinsic,
-                                                                       List[utils.PinholeCameraIntrinsic], None]:
-    if camera_intrinsic is None:
-        return None
-    try:
-        camera_intrinsic = eval(camera_intrinsic)
-        if not isinstance(camera_intrinsic, (list, tuple)):
-            raise NameError
-        return camera_intrinsic
-    except (NameError, SyntaxError):
-        if os.path.exists(camera_intrinsic):
-            return camera_intrinsic
-        elif camera_intrinsic.lower() == "none":
-            return None
-        return [utils.get_camera_intrinsic_from_blenderproc_bopwriter(path_to_camera_json=ci) for ci in sorted(glob.glob(camera_intrinsic))]
-
-
-def eval_source_or_target_params(params: SectionProxy) -> Dict[str, Any]:
-    number_of_points = eval_number_of_points(params.get("number_of_points"))
-    camera_intrinsic = eval_camera_intrinsic(params.get("camera_intrinsic"))
-    camera_extrinsic = eval_init_poses_or_ground_truth(params.get("camera_extrinsic"))
-    sample_type = eval_sample_type(params.get("sample_type"))
-    kwargs = {"depth_scale": params.getfloat("depth_scale"),
-              "depth_trunc": params.getfloat("depth_trunc")}
-    if number_of_points is not None:
-        kwargs["number_of_points"] = number_of_points
-    if camera_intrinsic is not None:
-        kwargs["camera_intrinsic"] = camera_intrinsic
-    if camera_extrinsic is not None:
-        kwargs["camera_extrinsic"] = camera_extrinsic
-    if sample_type is not None:
-        kwargs["sample_type"] = sample_type
-    return kwargs
-
-
-def run(config_dict: Union[dict, None] = None):
-    # Evaluate command line and config arguments
+def run(config: Union[configparser.ConfigParser, None] = None):
+    # Evaluate command line arguments
     start = time.time()
     parser = argparse.ArgumentParser(description="Performs point cloud registration.")
-    parser.add_argument("-c", "--config", default="registration.ini", type=str,
-                        help="Path to registration config.file.")
-    parser.add_argument("--verbose", action="store_true", help="Get verbose output during execution.")
+    parser.add_argument("-c", "--config", default="registration.ini", type=str, help="Path to registration config.")
+    parser.add_argument("-v", "--verbose", action="store_true", help="Get verbose output during execution.")
     args = parser.parse_args()
 
-    config = configparser.ConfigParser(inline_comment_prefixes='#')
-    config.read(args.config) if config_dict is None else config.read_dict(config_dict)
+    # Read config from argument or file
+    if config is None:
+        config = configparser.ConfigParser(inline_comment_prefixes='#')
+        config.read(args.config)
 
-    data = config["data"]
-    algorithms = config["algorithms"]
-    options = config["options"]
+    # Evaluate config
+    config_dict = eval_config(config)
+    data = config_dict["data"]
+    source_params = config_dict["source_params"]
+    target_params = config_dict["target_params"]
+    feature_processing = config_dict["feature_processing"]
+    source_processing = config_dict["source_processing"]
+    target_processing = config_dict["target_processing"]
+    algorithms = config_dict["algorithms"]
+    initializer_params = config_dict["initializer_params"]
+    refiner_params = config_dict["refiner_params"]
+    options = config_dict["options"]
 
     # Enable verbose output
-    if args.verbose or options.getboolean("verbose"):
+    if args.verbose or options["verbose"]:
         logger.setLevel(logging.DEBUG)
         set_logger_level(logging.DEBUG)
 
     # Instantiate initializer
-    initializer = algorithms.get("initializer")
-    assert initializer in ["none", "ransac", "fgr"],\
-        f"Invalid initializer {initializer}. Must be one of 'none', 'ransac', 'fgr."
-    params = config["initializer_params"]
-    if initializer is not None and initializer.lower() != "none":
-        logger.debug(f"Loading initializer {initializer}.")
-        normal_angle_threshold = params.getfloat("normal_angle_threshold")
-        if not options.getboolean("in_degrees"):
-            normal_angle_threshold = np.rad2deg(normal_angle_threshold)
-        n_times_initializer = params.getint("n_times")
-        draw_initializer = params.getboolean("draw")
-        overwrite_colors_initializer = params.getboolean("overwrite_colors")
-        if initializer.lower() == "ransac":
-            initializer = registration.RANSAC(max_iteration=params.getint("max_iteration"),
-                                              confidence=params.getfloat("confidence"),
-                                              max_correspondence_distance=params.getfloat("max_correspondence_distance"),
-                                              with_scaling=params.getboolean("with_scaling"),
-                                              ransac_n=params.getint("ransac_n"),
-                                              checkers=eval_checkers(params.get("checkers")),
-                                              similarity_threshold=params.getfloat("similarity_threshold"),
-                                              normal_angle_threshold=normal_angle_threshold)
-        elif initializer.lower() in ["fgr", "fast_global_registration", "fastglobalregistration"]:
-            initializer = registration.FastGlobalRegistration(max_iteration=params.getint("max_iteration"),
-                                                              max_correspondence_distance=params.getfloat("max_correspondence_distance"))
+    if algorithms["initializer"] is not None:
+        logger.debug(f"Loading initializer {algorithms['initializer']}.")
+        if not options["use_degrees"]:
+            normal_angle_threshold = np.rad2deg(initializer_params["normal_angle_threshold"])
         else:
-            raise ValueError(f"Only `ransac` and `fgr` supported as `initializer` but is {initializer}.")
-    else:
-        initializer = None
+            normal_angle_threshold = initializer_params["normal_angle_threshold"]
+        if algorithms['initializer'].lower() == "ransac":
+            initializer = registration.RANSAC(max_iteration=initializer_params["max_iteration"],
+                                              confidence=initializer_params["confidence"],
+                                              max_correspondence_distance=initializer_params["max_correspondence_distance"],
+                                              with_scaling=initializer_params["with_scaling"],
+                                              ransac_n=initializer_params["ransac_n"],
+                                              checkers=initializer_params["checkers"],
+                                              similarity_threshold=initializer_params["similarity_threshold"],
+                                              normal_angle_threshold=normal_angle_threshold)
+        elif algorithms['initializer'].lower() == "fgr":
+            initializer = registration.FastGlobalRegistration(max_iteration=initializer_params["max_iteration"],
+                                                              max_correspondence_distance=initializer_params["max_correspondence_distance"])
+        else:
+            raise ValueError(f"Only `ransac` and `fgr` supported as `initializer` but is {algorithms['initializer']}.")
 
     # Instantiate refiner
-    refiner = algorithms.get("refiner")
-    assert refiner in ["none", "icp"], f"Invalid refiner {refiner}. Must be one of 'none', 'icp'."
-    params = config["refiner_params"]
-    if refiner is not None and refiner.lower() != "none":
-        logger.debug(f"Loading refiner {refiner}.")
-        crop_target_around_source = params.getboolean("crop_target_around_source")
-        crop_scale = params.getfloat("crop_scale")
-        n_times_refiner = params.getint("n_times")
-        multi_scale_refiner = params.getboolean("multi_scale")
-        scales = eval(params.get("scales"))
-        iterations = eval(params.get("iterations"))
-        radius_multiplier = eval(params.get("radius_multiplier"))
-        draw_refiner = params.getboolean("draw")
-        overwrite_colors_refiner = params.getboolean("overwrite_colors")
-        if refiner.lower() in ["icp", "iterative_closest_point", "iterativeclosestpoint"]:
-            refiner = registration.IterativeClosestPoint(relative_fitness=params.getfloat("relative_fitness"),
-                                                         relative_rmse=params.getfloat("relative_rmse"),
-                                                         max_iteration=params.getint("max_iteration"),
-                                                         max_correspondence_distance=params.getfloat("max_correspondence_distance"),
-                                                         estimation_method=eval_estimation_method(params.get("estimation_method")),
-                                                         with_scaling=params.getboolean("with_scaling"),
-                                                         kernel=eval_kernel(params.get("kernel")),
-                                                         kernel_noise_std=params.getfloat("kernel_noise_std"))
+    if algorithms["refiner"] is not None:
+        logger.debug(f"Loading refiner {algorithms['refiner']}.")
+        if algorithms["refiner"].lower() == "icp":
+            refiner = registration.IterativeClosestPoint(relative_fitness=refiner_params["relative_fitness"],
+                                                         relative_rmse=refiner_params["relative_rmse"],
+                                                         max_iteration=refiner_params["max_iteration"],
+                                                         max_correspondence_distance=refiner_params["max_correspondence_distance"],
+                                                         estimation_method=refiner_params["estimation_method"],
+                                                         with_scaling=refiner_params["with_scaling"],
+                                                         kernel=refiner_params["kernel"],
+                                                         kernel_noise_std=refiner_params["kernel_noise_std"])
         else:
-            raise ValueError(f"Only `icp` supported as `refiner` but is {refiner}.")
-    else:
-        refiner = None
-    assert initializer is not None or refiner is not None,\
-        f"Either `initializer` or `refiner` need to be specified."
-
-    # Evaluate source and target data config
-    logger.debug("Evaluating data.")
-    source_data = data.get("source_files")
-    target_data = data.get("target_files")
-    try:
-        source_data = eval(source_data)
-    except (NameError, SyntaxError):
-        source_data = [source_data] if os.path.exists(source_data) else sorted(glob.glob(source_data))
-    try:
-        target_data = eval(data.get("target_files"))
-    except (NameError, SyntaxError):
-        target_data = [target_data] if os.path.exists(target_data) else sorted(glob.glob(target_data))
+            raise ValueError(f"Only `icp` supported as `refiner` but is {algorithms['refiner']}.")
 
     # Load source and target data
     logger.debug("Loading source data.")
-    kwargs = eval_source_or_target_params(params=config["source_params"])
-    source_list = utils.eval_data_parallel(data=source_data, **kwargs)
+    source_list = utils.eval_data_parallel(data=data["source_files"], **source_params)
 
     logger.debug("Loading target data.")
-    kwargs = eval_source_or_target_params(params=config["target_params"])
-    target_list = utils.eval_data_parallel(data=target_data, **kwargs)
+    target_list = utils.eval_data_parallel(data=data["target_files"], **target_params)
 
     # Process source and target data
     logger.debug("Processing source data.")
-    params = config["source_processing"]
     source_list = utils.process_point_cloud_parallel(point_cloud_list=source_list,
-                                                     downsample=eval_downsample(params.get("downsample")),
-                                                     downsample_factor=params.getfloat("downsample_factor"),
-                                                     remove_outlier=eval_outlier(params.get("remove_outlier")),
-                                                     outlier_std_ratio=params.getfloat("outlier_std_ratio"),
-                                                     scale=params.getfloat("scale"),
-                                                     estimate_normals=params.getboolean("estimate_normals"),
-                                                     recalculate_normals=params.getboolean("recalculate_normals"),
-                                                     normalize_normals=params.getboolean("normalize_normals"),
-                                                     orient_normals=eval_orient_normals(params.get("orient_normals")),
-                                                     search_param=eval_search_param(params.get("search_param")),
-                                                     search_param_knn=params.getint("search_param_knn"),
-                                                     search_param_radius=params.getfloat("search_param_radius"),
-                                                     draw=params.getboolean("draw"))
+                                                     downsample=source_processing["downsample"],
+                                                     downsample_factor=source_processing["downsample_factor"],
+                                                     remove_outlier=source_processing["remove_outlier"],
+                                                     outlier_std_ratio=source_processing["outlier_std_ratio"],
+                                                     scale=source_processing["scale"],
+                                                     estimate_normals=source_processing["estimate_normals"],
+                                                     recalculate_normals=source_processing["recalculate_normals"],
+                                                     normalize_normals=source_processing["normalize_normals"],
+                                                     orient_normals=source_processing["orient_normals"],
+                                                     search_param=source_processing["search_param"],
+                                                     search_param_knn=source_processing["search_param_knn"],
+                                                     search_param_radius=source_processing["search_param_radius"],
+                                                     draw=source_processing["draw"])
 
     logger.debug("Processing target data.")
-    params = config["target_processing"]
     target_list = utils.process_point_cloud_parallel(point_cloud_list=target_list,
-                                                     downsample=eval_downsample(params.get("downsample")),
-                                                     downsample_factor=params.getfloat("downsample_factor"),
-                                                     remove_outlier=eval_outlier(params.get("remove_outlier")),
-                                                     outlier_std_ratio=params.getfloat("outlier_std_ratio"),
-                                                     scale=params.getfloat("scale"),
-                                                     estimate_normals=params.getboolean("estimate_normals"),
-                                                     recalculate_normals=params.getboolean("recalculate_normals"),
-                                                     normalize_normals=params.getboolean("normalize_normals"),
-                                                     orient_normals=eval_orient_normals(params.get("orient_normals")),
-                                                     search_param=eval_search_param(params.get("search_param")),
-                                                     search_param_knn=params.getint("search_param_knn"),
-                                                     search_param_radius=params.getfloat("search_param_radius"),
-                                                     draw=params.getboolean("draw"))
+                                                     downsample=target_processing["downsample"],
+                                                     downsample_factor=target_processing["downsample_factor"],
+                                                     remove_outlier=target_processing["remove_outlier"],
+                                                     outlier_std_ratio=target_processing["outlier_std_ratio"],
+                                                     scale=target_processing["scale"],
+                                                     estimate_normals=target_processing["estimate_normals"],
+                                                     recalculate_normals=target_processing["recalculate_normals"],
+                                                     normalize_normals=target_processing["normalize_normals"],
+                                                     orient_normals=target_processing["orient_normals"],
+                                                     search_param=target_processing["search_param"],
+                                                     search_param_knn=target_processing["search_param_knn"],
+                                                     search_param_radius=target_processing["search_param_radius"],
+                                                     draw=target_processing["draw"])
 
     # Run registration algorithms
     results = list()
-    init_list = eval_init_poses_or_ground_truth(data.get("init_poses"))
-    if initializer is not None:
+    init_list = data["init_poses"]
+    if algorithms["initializer"] is not None:
         logger.debug(f"Running initializer {initializer.name}.")
-        params = config["feature_processing"]
         results = initializer.run_many(source_list=source_list,
                                        target_list=target_list,
                                        init_list=init_list,
-                                       one_vs_one=algorithms.getboolean("one_vs_one"),
-                                       n_times=n_times_initializer,
-                                       draw=draw_initializer,
-                                       overwrite_colors=overwrite_colors_initializer,
-                                       search_param=eval_search_param(params.get("search_param")),
-                                       search_param_knn=params.getint("search_param_knn"),
-                                       search_param_radius=params.getfloat("search_param_radius"))
+                                       one_vs_one=data["one_vs_one"],
+                                       n_times=initializer_params["n_times"],
+                                       draw=initializer_params["draw"],
+                                       overwrite_colors=initializer_params["overwrite_colors"],
+                                       search_param=feature_processing["search_param"],
+                                       search_param_knn=feature_processing["search_param_knn"],
+                                       search_param_radius=feature_processing["search_param_radius"])
         init_list = [result.transformation for result in results]
-    if refiner is not None:
+    if algorithms["refiner"] is not None:
         logger.debug(f"Running refiner {refiner.name}.")
         results = refiner.run_many(source_list=source_list,
                                    target_list=target_list,
                                    init_list=init_list,
-                                   one_vs_one=algorithms.getboolean("one_vs_one"),
-                                   n_times=n_times_refiner,
-                                   multi_scale=multi_scale_refiner,
-                                   source_scales=scales,
-                                   iterations=iterations,
-                                   radius_multiplier=radius_multiplier,
-                                   crop_target_around_source=crop_target_around_source,
-                                   crop_scale=crop_scale,
-                                   draw=draw_refiner,
-                                   overwrite_colors=overwrite_colors_refiner)
+                                   one_vs_one=data["one_vs_one"],
+                                   n_times=refiner_params["n_times"],
+                                   multi_scale=refiner_params["multi_scale"],
+                                   source_scales=refiner_params["scales"],
+                                   iterations=refiner_params["iterations"],
+                                   radius_multiplier=refiner_params["radius_multiplier"],
+                                   crop_target_around_source=refiner_params["crop_target_around_source"],
+                                   crop_scale=refiner_params["crop_scale"],
+                                   draw=refiner_params["draw"],
+                                   overwrite_colors=refiner_params["overwrite_colors"])
     logger.debug(f"Execution took {time.time() - start} seconds.")
 
+    # Load ground truth data
+    ground_truth = data["ground_truth"]
+    if ground_truth is not None:
+        if not isinstance(ground_truth, list):
+            ground_truth = [ground_truth]
+        ground_truth = [utils.eval_transformation_data(gt) for gt in ground_truth]
+        if len(ground_truth) == 1:
+            ground_truth *= len(results)
+        assert len(ground_truth) == len(results)
+
     # Evaluate registration results
-    ground_truth = eval_init_poses_or_ground_truth(data.get("ground_truth"))
     names = list()
     errors = list()
-    if algorithms.getboolean("one_vs_one"):
+    if data["one_vs_one"]:
         assert len(results) == len(source_list) == len(target_list)
-        if ground_truth is not None:
-            if len(ground_truth) == 1:
-                ground_truth *= len(results)
-            assert len(ground_truth) == len(results)
         for i in range(len(results)):
             names.append(f"s{i} - t{i}")
             if ground_truth is not None:
                 errors.append(utils.get_transformation_error(results[i].transformation,
                                                              ground_truth[i],
-                                                             in_degrees=options.getboolean("use_degrees")))
+                                                             in_degrees=options["use_degrees"]))
             else:
                 errors.append(('?', '?'))
     else:
         assert len(results) == len(source_list) * len(target_list)
-        if ground_truth is not None:
-            if len(ground_truth) == 1:
-                ground_truth *= len(results)
-            assert len(ground_truth) == len(results)
         estimates = [T.transformation for T in results]
         for i in range(len(target_list)):
             for j in range(len(source_list)):
@@ -411,14 +322,14 @@ def run(config_dict: Union[dict, None] = None):
                 if ground_truth is not None:
                     errors.append(utils.get_transformation_error(estimates.pop(0),
                                                                  ground_truth.pop(0),
-                                                                 in_degrees=options.getboolean("use_degrees")))
+                                                                 in_degrees=options["use_degrees"]))
                 else:
                     errors.append(('?', '?'))
     errors_rot = [error[0] for error in errors]
     errors_trans = [error[1] for error in errors]
 
     # Print evaluation results
-    if options.getboolean("print_results"):
+    if options["print_results"]:
         table = tabulate.tabulate([(name,
                                     result.fitness,
                                     result.inlier_rmse,
@@ -432,13 +343,13 @@ def run(config_dict: Union[dict, None] = None):
                                            "fitness",
                                            "inlier rmse",
                                            "# corresp.",
-                                           f"error rot. {'[deg]' if options.getboolean('use_degrees') else '[rad]'}",
+                                           f"error rot. {'[deg]' if options['use_degrees'] else '[rad]'}",
                                            "error trans. [m]"])
         print(table)
 
     # Return results
-    _return = options.get("return").lower()
-    if _return == "all":
+    _return = options["return"].lower()
+    if _return == "everything":
         return {"names": names,
                 "results": results,
                 "transformations": [result.transformation for result in results],
