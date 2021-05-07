@@ -4,4 +4,5 @@ setuptools~=49.2.1
 pytest~=6.2.3
 joblib~=1.0.1
 tabulate~=0.8.9
-scikit-optimize~=0.8.1
+tqdm~=4.60.0
+matplotlib~=3.4.1

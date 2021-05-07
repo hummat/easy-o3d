@@ -15,7 +15,15 @@ from typing import Union, Dict, Any
 logger = logging.getLogger(__name__)
 
 
-def eval_config(config: configparser.ConfigParser) -> Dict[str, Any]:
+def eval_config(config: configparser.ConfigParser) -> Dict[str, Dict[str, Any]]:
+    """Evaluates data types of a ConfigParser object.
+
+    Args:
+        config: A ConfigParser object.
+
+    Returns:
+        A dict of dicts with sections and options identical to 'config' but with evaluated values.
+    """
     config_dict = dict()
     for section in config.sections():
         config_dict[section] = dict()
@@ -137,6 +145,12 @@ def eval_config(config: configparser.ConfigParser) -> Dict[str, Any]:
 
 
 def print_config_dict(config_dict: Dict[str, Any], pretty: bool = True) -> None:
+    """Pretty-prints a config dict created by 'eval_config'.
+
+    Args:
+        config_dict: A config dict created by 'eval_config'.
+        pretty: Pretty-print dict keys.
+    """
     config_list = list()
     for section in config_dict.keys():
         config_list.append(("", ""))
@@ -149,12 +163,13 @@ def print_config_dict(config_dict: Dict[str, Any], pretty: bool = True) -> None:
     print(tabulate.tabulate(config_list))
 
 
-def run(config: Union[configparser.ConfigParser, None] = None):
+def run(config: Union[configparser.ConfigParser, None] = None) -> Dict[str, Any]:
     # Evaluate command line arguments
     start = time.time()
     parser = argparse.ArgumentParser(description="Performs point cloud registration.")
     parser.add_argument("-c", "--config", default="registration.ini", type=str, help="Path to registration config.")
     parser.add_argument("-v", "--verbose", action="store_true", help="Get verbose output during execution.")
+    parser.add_argument("-d", "--draw", action="store_true", help="Visualize registration results.")
     args = parser.parse_args()
 
     # Read config from argument or file
@@ -179,6 +194,7 @@ def run(config: Union[configparser.ConfigParser, None] = None):
     if args.verbose or options["verbose"]:
         logger.setLevel(logging.DEBUG)
         set_logger_level(logging.DEBUG)
+        print_config_dict(config_dict)
 
     # Instantiate initializer
     if algorithms["initializer"] is not None:
@@ -219,10 +235,10 @@ def run(config: Union[configparser.ConfigParser, None] = None):
 
     # Load source and target data
     logger.debug("Loading source data.")
-    source_list = utils.eval_data_parallel(data=data["source_files"], **source_params)
+    source_list = utils.eval_data_parallel(data_list=data["source_files"], **source_params)
 
     logger.debug("Loading target data.")
-    target_list = utils.eval_data_parallel(data=data["target_files"], **target_params)
+    target_list = utils.eval_data_parallel(data_list=data["target_files"], **target_params)
 
     # Process source and target data
     logger.debug("Processing source data.")
@@ -267,7 +283,7 @@ def run(config: Union[configparser.ConfigParser, None] = None):
                                        init_list=init_list,
                                        one_vs_one=data["one_vs_one"],
                                        n_times=initializer_params["n_times"],
-                                       draw=initializer_params["draw"],
+                                       draw=initializer_params["draw"] or (args.draw and algorithms["refiner"] is None),
                                        overwrite_colors=initializer_params["overwrite_colors"],
                                        search_param=feature_processing["search_param"],
                                        search_param_knn=feature_processing["search_param_knn"],
@@ -286,7 +302,7 @@ def run(config: Union[configparser.ConfigParser, None] = None):
                                    radius_multiplier=refiner_params["radius_multiplier"],
                                    crop_target_around_source=refiner_params["crop_target_around_source"],
                                    crop_scale=refiner_params["crop_scale"],
-                                   draw=refiner_params["draw"],
+                                   draw=refiner_params["draw"] or args.draw,
                                    overwrite_colors=refiner_params["overwrite_colors"])
     logger.debug(f"Execution took {time.time() - start} seconds.")
 
@@ -298,13 +314,14 @@ def run(config: Union[configparser.ConfigParser, None] = None):
         ground_truth = [utils.eval_transformation_data(gt) for gt in ground_truth]
         if len(ground_truth) == 1:
             ground_truth *= len(results)
-        assert len(ground_truth) == len(results)
+        assert len(ground_truth) == len(results), f"'ground_truth' and 'results' must have equal length."
 
     # Evaluate registration results
     names = list()
     errors = list()
     if data["one_vs_one"]:
-        assert len(results) == len(source_list) == len(target_list)
+        assert len(results) == len(source_list) == len(target_list),\
+            f"'results', 'source_list' and 'target_list' must have equal length."
         for i in range(len(results)):
             names.append(f"s{i} - t{i}")
             if ground_truth is not None:
@@ -314,7 +331,8 @@ def run(config: Union[configparser.ConfigParser, None] = None):
             else:
                 errors.append(('?', '?'))
     else:
-        assert len(results) == len(source_list) * len(target_list)
+        assert len(results) == len(source_list) * len(target_list), \
+            f"'len(results)' must equal 'len(source_list) * len(target_list)."
         estimates = [T.transformation for T in results]
         for i in range(len(target_list)):
             for j in range(len(source_list)):
@@ -329,7 +347,7 @@ def run(config: Union[configparser.ConfigParser, None] = None):
     errors_trans = [error[1] for error in errors]
 
     # Print evaluation results
-    if options["print_results"]:
+    if options["print_results"] or options["verbose"] or args.verbose:
         table = tabulate.tabulate([(name,
                                     result.fitness,
                                     result.inlier_rmse,
@@ -349,25 +367,18 @@ def run(config: Union[configparser.ConfigParser, None] = None):
 
     # Return results
     _return = options["return"].lower()
-    if _return == "everything":
-        return {"names": names,
-                "results": results,
-                "transformations": [result.transformation for result in results],
-                "errors_rot": errors_rot,
-                "errors_trans": errors_trans}
-    else:
-        return_data = dict()
-        if "names" in _return:
-            return_data["names"] = names
-        if "results" in _return:
-            return_data["results"] = results
-        if "transformations" in _return:
-            return_data["transformations"] = [result.transformation for result in results]
-        if "errors_rot" in _return:
-            return_data["errors_rot"] = errors_rot
-        if "errors_trans" in _return:
-            return_data["errors_trans"] = errors_trans
-        return return_data
+    return_data = dict()
+    if "names" in _return:
+        return_data["names"] = names
+    if "results" in _return:
+        return_data["results"] = results
+    if "transformations" in _return:
+        return_data["transformations"] = [result.transformation for result in results]
+    if "errors_rot" in _return or "errors" in _return:
+        return_data["errors_rot"] = errors_rot
+    if "errors_trans" in _return or "errors" in _return:
+        return_data["errors_trans"] = errors_trans
+    return return_data
 
 
 if __name__ == "__main__":

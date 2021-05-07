@@ -2,7 +2,8 @@
 
 Classes:
     ICPTypes: Supported ICP registration types.
-    MyRegistrationResult: Helper class mimicking Open3D's `RegistrationResult` but mutable.
+    MetricTypes: Supported registration quality metric types.
+    MyRegistrationResult: Helper class mimicking Open3D's `RegistrationResult` but mutable and with added runtime.
     RegistrationInterface: Interface for all registration classes.
 """
 
@@ -19,7 +20,7 @@ from multiprocessing import cpu_count
 import numpy as np
 import open3d as o3d
 
-from .utils import (InputTypes, DownsampleTypes, SearchParamTypes, OrientationTypes, eval_data, draw_geometries,
+from .utils import (InputTypes, DownsampleTypes, SearchParamTypes, eval_data, draw_geometries,
                     process_point_cloud, TransformationTypes)
 
 PointToPoint = o3d.pipelines.registration.TransformationEstimationPointToPoint
@@ -41,7 +42,7 @@ class ICPTypes(Flag):
 
 
 class MetricTypes(Flag):
-    """Supported metric types."""
+    """Supported registration quality metric types."""
     RMSE = auto()
     FITNESS = auto()
     SUM = auto()
@@ -120,9 +121,7 @@ class RegistrationInterface(ABC):
             if _hash in self._cached_data:
                 return self._cached_data[_hash]
         logger.debug(f"Couldn't find data {data_key_or_value} in cache. Re-evaluating.")
-        return eval_data(data=data_key_or_value,
-                         number_of_points=kwargs.get("number_of_points"),
-                         camera_intrinsic=kwargs.get("camera_intrinsic"))
+        return eval_data(data=data_key_or_value, **kwargs)
 
     def _eval_data_parallel(self, data_keys_or_values: List[InputTypes], **kwargs: Any) -> List[PointCloud]:
         """Runs _eval_data in parallel threads.
@@ -159,7 +158,7 @@ class RegistrationInterface(ABC):
             data: The data to be cached.
             replace: Overwrite existing data in cache.
         """
-        if len(data) > 10:  # Magic number: Threshold above which multi-threaded loading might start to make sense
+        if len(data) > 1:
             parallel = Parallel(n_jobs=min(cpu_count(), len(data)), prefer="threads")
             values = parallel(delayed(eval_data)(data=value,
                                                  number_of_points=kwargs.get("number_of_points"),
@@ -391,7 +390,7 @@ class RegistrationInterface(ABC):
         if target_scales is None:
             target_scales = source_scales
         assert len(source_scales) == len(iterations) == len(target_scales), \
-            "Need to provide the same number of scales and iterations."
+            "Need to provide same number of 'source_scales', 'target_scales' and 'iterations'."
 
         _source = self._eval_data(data_key_or_value=source, **kwargs)
         _target = self._eval_data(data_key_or_value=target, **kwargs)
@@ -409,7 +408,7 @@ class RegistrationInterface(ABC):
                                               downsample_factor=source_scale,
                                               estimate_normals=False if "POINT_TO_POINT" in self.name else True,
                                               recalculate_normals=kwargs.get("recalculate_normals", False),
-                                              orient_normals=kwargs.get("orient_normals", OrientationTypes.NONE),
+                                              orient_normals=kwargs.get("orient_normals", None),
                                               search_param=kwargs.get("search_param", SearchParamTypes.HYBRID),
                                               search_param_radius=source_radius,
                                               search_param_knn=kwargs.get("search_param_knn", 30))
@@ -418,7 +417,7 @@ class RegistrationInterface(ABC):
                                               downsample_factor=target_scale,
                                               estimate_normals=False if "POINT_TO_POINT" in self.name else True,
                                               recalculate_normals=kwargs.get("recalculate_normals", False),
-                                              orient_normals=kwargs.get("orient_normals", OrientationTypes.NONE),
+                                              orient_normals=kwargs.get("orient_normals", None),
                                               search_param=kwargs.get("search_param", SearchParamTypes.HYBRID),
                                               search_param_radius=target_radius,
                                               search_param_knn=kwargs.get("search_param_knn", 30))
@@ -485,8 +484,8 @@ class RegistrationInterface(ABC):
             If `one_vs_one`, the order is source_0 <-> target_0, source_1 <-> target_1, ...
         """
         start = time.time()
-        if multi_thread_preload and any(type(x) == str for x in source_list + target_list):
-            source_target_list = self._eval_data_parallel(source_list + target_list)
+        if multi_thread_preload and any(isinstance(x, str) for x in source_list + target_list):
+            source_target_list = self._eval_data_parallel(source_list + target_list, **kwargs)
             source_list, target_list = source_target_list[:len(source_list)], source_target_list[len(source_list):]
 
         is_list = True
@@ -494,8 +493,7 @@ class RegistrationInterface(ABC):
             init_list = np.eye(4)
             is_list = False
         elif isinstance(init_list, str):
-            if init_list.lower() == "center":
-                is_list = False
+            is_list = False
         # A single rotation, translation or transformation in natural or homogeneous coordinates
         if np.asarray(init_list).size in [3, 4, 6, 9, 12, 16] and all(isinstance(value, (float, int)) for value in init_list):
             is_list = False
@@ -507,7 +505,7 @@ class RegistrationInterface(ABC):
         results = list()
         if one_vs_one and len(source_list) == len(target_list):
             if is_list:
-                assert len(init_list) == len(source_list)
+                assert len(init_list) == len(source_list), f"'init_list' and 'source_list' must have equal length."
             for source, target in zip(source_list, target_list):
                 if n_times == 1:
                     if multi_scale:
@@ -531,7 +529,8 @@ class RegistrationInterface(ABC):
             if one_vs_one:
                 logger.warning(f"Source and target list have unequal length which is required for `one_vs_one`.")
             if is_list:
-                assert len(init_list) == len(source_list) * len(target_list)
+                assert len(init_list) == len(source_list) * len(target_list),\
+                    f"'len(init_list)' must equal 'len(source_list) * len(target_list)."
             for target in target_list:
                 for source in source_list:
                     if n_times == 1:

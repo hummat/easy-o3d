@@ -1,11 +1,11 @@
 """Point cloud registration functionality.
 
 Classes:
+    CheckerTypes: Supported RANSAC correspondence checker types.
+    KernelTypes: Supported ICP Point-To-Plane robust kernel types.
     IterativeClosestPoint: The Iterative Closest Point (ICP) algorithm.
     FastGlobalRegistration: The Fast Global Registration (FGR) algorithm.
     RANSAC: The RANSAC algorithm.
-    CheckerTypes: Supported RANSAC correspondence checker types.
-    KernelTypes: Supported ICP Point-To-Plane robust kernel types.
 """
 
 import copy
@@ -81,7 +81,6 @@ class IterativeClosestPoint(RegistrationInterface):
         run(source, target, init, ...): Runs the *Iterative Closest Point* algorithm between `source` and `target` point
                                         cloud with initial pose.
     """
-
     def __init__(self,
                  relative_fitness: float = 1e-6,
                  relative_rmse: float = 1e-6,
@@ -182,7 +181,10 @@ class IterativeClosestPoint(RegistrationInterface):
         elif self.estimation_method == ICPTypes.PLANE:
             kernel = kwargs.get("kernel", self.kernel)
             if kernel is not None:
-                kernel = kernel(k=kwargs.get("kernel_noise_std", self.kernel_noise_std))
+                if kernel not in [KernelTypes.L1, KernelTypes.L2]:
+                    kernel = kernel(k=kwargs.get("kernel_noise_std", self.kernel_noise_std))
+                else:
+                    kernel = kernel()
                 self._estimation_method = PointToPlane(kernel=kernel)
             else:
                 self._estimation_method = PointToPlane()
@@ -576,7 +578,10 @@ class RANSAC(RegistrationInterface):
         elif self.estimation_method == ICPTypes.PLANE:
             kernel = kwargs.get("kernel", self.kernel)
             if kernel is not None:
-                kernel = kernel(k=kwargs.get("kernel_noise_std", self.kernel_noise_std))
+                if kernel not in [KernelTypes.L1, KernelTypes.L2]:
+                    kernel = kernel(k=kwargs.get("kernel_noise_std", self.kernel_noise_std))
+                else:
+                    kernel = kernel()
                 self._estimation_method = PointToPlane(kernel=kernel)
             else:
                 self._estimation_method = PointToPlane()

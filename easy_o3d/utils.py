@@ -3,16 +3,19 @@
 Classes:
     SampleTypes: Supported types of point cloud sampling from meshes.
     DownsampleTypes: Supported point cloud downsampling types.
+    OutlierTypes: Supported outlier removal types.
     SearchParamTypes: Supported normal and FPFH feature computation search parameter types.
     OrientationTypes: Supported normal orientation types.
 
 Functions:
     eval_data: Convenience function that automatically determines the data type and loads the data accordingly.
+    eval_data_parallel: Evaluates a list of inputs in parallel using multi-threading.
     process_point_cloud: Utility function to apply various processing steps on point cloud data.
+    process_point_cloud_parallel: Processes a list of point clouds in parallel using multi-threading.
     read_point_cloud: Reads point cloud data from file.
     read_triangle_mesh: Reads triangle mesh data from file.
-    read_triangle_mesh_from_triangles_and_vertices: Convenience function to obtain triangle meshes from triangles
-                                                    and vertices.
+    get_triangle_mesh_from_triangles_and_vertices: Convenience function to obtain triangle meshes from triangles and
+                                                   vertices.
     get_point_cloud_from_points: Convenience function to obtain point clouds from points.
     sample_point_cloud_from_triangle_mesh: Convenience function to obtain point clouds from triangle meshes.
     get_camera_intrinsic_from_array: Constructs camera intrinsic object from image dimensions and camara intrinsic data.
@@ -21,13 +24,24 @@ Functions:
     eval_camera_intrinsic_type: Convenience function constructing a camera intrinsic object based on input type.
     convert_depth_image_to_point_cloud: Convenience function converting depth images to point clouds.
     convert_rgbd_image_to_point_cloud: Convenience function converting RGB-D image data to point clouds.
+    eval_transformation_data: Evaluates different types of transformation data to obtain a 4x4 transformation matrix.
     get_transformation_matrix_from_xyz: Constructs a 4x4 homogenous transformation matrix from a XYZ translation vector
-                                        and XYZ Euler angles
+                                        and XYZ Euler angles.
     get_transformation_matrix_from_quaternion: Constructs a 4x4 homogenous transformation matrix from a XYZ translation
                                                vector and WXYZ quaternion values.
+    get_ground_truth_pose_from_file: Reads ground truth from JSON file.
+    get_camera_intrinsic_from_blenderproc_bopwriter: Constructs intrinsic camera parameter object from BlenderProc
+                                                     BopWriter data.
+    get_camera_extrinsic_from_blenderproc_bopwriter: Reads camera extrinsic transform from BlenderProc Bopwriter data.
     get_camera_parameters_from_blenderproc_bopwriter: Constructs intrinsic and extrinsic camera parameter object from
                                                       BlenderProc BopWriter data.
+    read_camera_parameters: Reads pinhole camera parameters (intrinsic, extrinsic) from file.
+    read_camera_intrinsic: Reads pinhole camera intrinsic parameters from file.
     draw_geometries: Convenience function to draw 3D geometries.
+    get_transformation_error: Computes the rotational and translational error between estimated and ground-truth
+                              transformation data.
+    get_rotation_error: Computes the error between estimated and ground-truth rotation in degrees or radians.
+    get_translation_error: Computes the mean-squared translational error between estimated and ground-truth translation.
 """
 
 import copy
@@ -153,35 +167,44 @@ def eval_data(data: InputTypes,
         raise TypeError(f"Can't process data of type {type(data)}.")
 
 
-def eval_data_parallel(data: List[InputTypes],
+def eval_data_parallel(data_list: List[InputTypes],
                        num_threads: int = cpu_count(),
                        **kwargs: Any) -> List[PointCloud]:
+    """Evaluates a list of inputs in parallel using multi-threading.
+
+    Args:
+        data_list: The list of inputs.
+        num_threads: The number of parallel threads to run.
+
+    Returns:
+        List of evaluated inputs.
+    """
     kwargs_list = list()
-    for i, d in enumerate(data):
+    for i, d in enumerate(data_list):
         kwargs_dict = {"data": d}
         for key, value in kwargs.items():
             kwargs_dict[key] = value[i] if isinstance(value, list) else value
         kwargs_list.append(kwargs_dict)
-    if len(data) == 1:
+    if len(data_list) == 1:
         return [eval_data(**kwargs_list[0])]
-    parallel = Parallel(n_jobs=min(num_threads, len(data)), prefer="threads")
+    parallel = Parallel(n_jobs=min(num_threads, len(data_list)), prefer="threads")
     return parallel(delayed(eval_data)(**params) for params in kwargs_list)
 
 
 def process_point_cloud(point_cloud: PointCloud,
+                        scale: float = 1.0,
                         downsample: Union[DownsampleTypes, None] = None,
                         downsample_factor: Union[float, int] = 1,
                         remove_outlier: Union[OutlierTypes, None] = None,
                         outlier_std_ratio: float = 1.0,
                         transformation: [np.ndarray, list, None] = None,
-                        scale: float = 1.0,
                         estimate_normals: bool = False,
                         recalculate_normals: bool = False,
                         fast_normal_computation: bool = True,
                         normalize_normals: bool = False,
                         orient_normals: Union[OrientationTypes, None] = None,
                         compute_feature: bool = False,
-                        search_param: Union[SearchParamTypes, None] = None,
+                        search_param: Union[SearchParamTypes, None] = SearchParamTypes.HYBRID,
                         search_param_knn: int = 30,
                         search_param_radius: float = 0.02,  # 2cm
                         camera_location_or_direction: [np.ndarray, list] = np.zeros(3),
@@ -189,10 +212,10 @@ def process_point_cloud(point_cloud: PointCloud,
     """Utility function to apply various processing steps on point cloud data.
 
     Processing steps are applied in order implied by the functions argument order:
-    1. `downsample`
-    2. `remove outlier`
-    3. `transform`
-    4. `scale`
+    1. `scale`
+    2. `downsample`
+    3. `remove outlier`
+    4. `transformation`
     5. `estimate normals`
     6. `normalize normals`
     7. `orient normals`
@@ -202,13 +225,13 @@ def process_point_cloud(point_cloud: PointCloud,
 
     Args:
         point_cloud: The point cloud to be processed.
+        scale: Scales the point cloud.
         downsample: Reduce point cloud density by dropping points uniformly or in voxel grid fashion.
         downsample_factor: The amount of downsampling. Factor for `DownsampleType.UNIFORM`, voxel size for
                            `DownsampleType.VOXEL`.
         remove_outlier: Remove outlier vertices based on radius density or variance.
         outlier_std_ratio: Standard deviation for statistical outlier removal. Smaller removes more vertices.
         transformation: Homogeneous transformation. Also accepts translation vector or rotation matrix.
-        scale: Scales the point cloud.
         estimate_normals: Estimate vertex normals.
         recalculate_normals: Recalculate normals if the point cloud already has normals.
         fast_normal_computation: Use fast normal computation algorithm.
@@ -226,6 +249,13 @@ def process_point_cloud(point_cloud: PointCloud,
     """
     start = time.time()
     _point_cloud = copy.deepcopy(point_cloud)
+    if scale != 1.0:
+        logger.debug(f"Scaling point cloud with factor {scale}.")
+        logger.debug("Using custom scaling code as PointCloud.scale doesn't seem to work.")
+        _point_cloud.points = o3d.utility.Vector3dVector(np.asarray(_point_cloud.points) * scale)
+        # FIXME: Open3D factory `scale` function doesn't do anything.
+        # _point_cloud = _point_cloud.scale(scale=scale, center=_point_cloud.get_center())
+
     if downsample is not None:
         logger.debug(f"{downsample} downsampling point cloud with factor {downsample_factor}.")
         logger.debug(f"Number of points before downsampling: {len(np.asarray(_point_cloud.points))}")
@@ -264,13 +294,6 @@ def process_point_cloud(point_cloud: PointCloud,
         else:
             raise ValueError("`transformation` needs to be a valid translation, rotation or transformation in natural"
                              "or homogeneous coordinates, i.e. of size 3, 4, 9 or 16.")
-
-    if scale != 1.0:
-        logger.debug(f"Scaling point cloud with factor {scale}.")
-        logger.debug("Using custom scaling code as PointCloud.scale doesn't seem to work.")
-        _point_cloud.points = o3d.utility.Vector3dVector(np.asarray(_point_cloud.points) * scale)
-        # FIXME: Open3D factory `scale` function doesn't do anything.
-        # _point_cloud = _point_cloud.scale(scale=scale, center=_point_cloud.get_center())
 
     if (estimate_normals or compute_feature) and search_param is not None:
         if search_param == SearchParamTypes.KNN:
@@ -410,19 +433,19 @@ def get_point_cloud_from_points(points: np.ndarray) -> PointCloud:
     Returns:
         The point cloud created from the points.
     """
-    return o3d.geometry.PointCloud(o3d.utility.Vector3dVector(points))
+    return PointCloud(o3d.utility.Vector3dVector(points))
 
 
 def sample_point_cloud_from_triangle_mesh(mesh_or_filename: Union[TriangleMesh, str],
                                           number_of_points: int,
-                                          sample_type: SampleTypes = SampleTypes.UNIFORMLY,
+                                          sample_type: Union[SampleTypes, None] = SampleTypes.UNIFORMLY,
                                           **kwargs: Any) -> PointCloud:
     """Convenience function to obtain point clouds from triangle meshes.
 
     Args:
         mesh_or_filename: The triangle mesh from which the point cloud is sampled.
         number_of_points: Number of points to sample from the triangle mesh.
-        sample_type: How to sample the points from the triangle mesh.
+        sample_type: How to sample the points from the triangle mesh. If `None`, returns mesh vertices.
 
     Returns:
         The point cloud obtained from the triangle mesh through sampling.
@@ -433,6 +456,9 @@ def sample_point_cloud_from_triangle_mesh(mesh_or_filename: Union[TriangleMesh, 
         mesh = mesh_or_filename
     else:
         raise TypeError(f"Can't read mesh of type {type(mesh_or_filename)}.")
+
+    if sample_type is None:
+        return PointCloud(o3d.utility.Vector3dVector(mesh.vertices))
 
     if sample_type == SampleTypes.UNIFORMLY:
         return mesh.sample_points_uniformly(number_of_points=number_of_points,
@@ -542,7 +568,7 @@ def eval_image_type(image_or_path: RGBDImageTypes, **kwargs: Any) -> Union[Image
             raise ValueError(f"Input shape must be WxH, WxHx3 or WxHx4 but is {color_or_depth.shape}.")
 
 
-def eval_camera_intrinsic_type(image_or_path: ImageTypes, camera_intrinsic: CameraTypes):
+def eval_camera_intrinsic_type(image_or_path: ImageTypes, camera_intrinsic: CameraTypes) -> PinholeCameraIntrinsic:
     """Convenience function constructing a camera intrinsic object based on input type.
 
     Args:
@@ -581,7 +607,7 @@ def convert_depth_image_to_point_cloud(image_or_path: ImageTypes,
         The point cloud created from the depth image data.
     """
     image = eval_image_type(image_or_path=image_or_path, **kwargs)
-    assert isinstance(image, Image)
+    assert isinstance(image, Image), f"'image' must have type 'Image' but has type {type(image)}."
     assert len(np.asarray(image).shape) == 2, f"Depth image must have shape WxH but is {image.shape}."
 
     intrinsic = eval_camera_intrinsic_type(image_or_path=image, camera_intrinsic=camera_intrinsic)
@@ -618,7 +644,7 @@ def convert_rgbd_image_to_point_cloud(rgbd_image_or_path: RGBDImageTypes,
                                  depth_scale=depth_scale,
                                  depth_trunc=depth_trunc,
                                  **kwargs)
-    assert isinstance(rgbd_image, RGBDImage)
+    assert isinstance(rgbd_image, RGBDImage), f"'rgbd_image must have type 'RGBDImage' but has type {type(rgbd_image)}."
 
     intrinsic = eval_camera_intrinsic_type(image_or_path=rgbd_image, camera_intrinsic=camera_intrinsic)
     extrinsic = np.asarray(camera_extrinsic).reshape(4, 4)
@@ -1008,7 +1034,9 @@ def get_rotation_error(rotation_estimate: np.ndarray,
     Returns:
         Error between estimated and ground-truth rotation in degrees or radians.
     """
-    assert (rotation_estimate.shape == rotation_ground_truth.shape == (3, 3))
+    assert (rotation_estimate.shape == rotation_ground_truth.shape == (3, 3)),\
+        f"Rotation estimate and ground truth both need to have shape (3, 3) but are {rotation_estimate.shape} and " \
+        f"{rotation_ground_truth.shape}."
     error_cos = 0.5 * (np.trace(rotation_estimate @ rotation_ground_truth.T) - 1.0)
 
     # Avoid invalid values due to numerical errors.
@@ -1030,6 +1058,8 @@ def get_translation_error(translation_estimate: np.ndarray, translation_ground_t
     Returns:
         Mean-squared-error between estimated and ground-truth translation.
     """
-    assert (translation_estimate.size == translation_ground_truth.size == 3)
+    assert (translation_estimate.size == translation_ground_truth.size == 3),\
+        f"Translation estimate and ground truth need to have size 3 but have {translation_estimate.size} and " \
+        f"{translation_ground_truth.size}."
     error = np.linalg.norm(translation_ground_truth - translation_estimate)
     return error
