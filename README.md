@@ -1,5 +1,5 @@
 # Easy Open3D
-Welcome to Easy Open3D, the easy-to-use wrapper around, as well as utility functions and scripts for, some of
+Welcome to Easy Open3D (the easy-to-use wrapper around) as well as utility functions and scripts for, some of
 [Open3D](http://www.open3d.org) 's registration functionality.
 
 _Head over to the repository's [**GitHub** pages site](https://hummat.github.io/easy-o3d) for a more interactive
@@ -14,7 +14,7 @@ manipulate to the part of the 3D scan (obtained through depth sensors; called `t
 in to find its pose in this scene. The pose of an object consists of its rotation and translation in some coordinate
 frame, typically the robots head frame, camera frame or world frame.
 
-### A simple yet slightly contrived example
+### A simple (yet slightly contrived) example
 Say we want to find the pose of Suzanne (the blue ape head on the chair who is the Blender mascot) in this scene:
 
 ![](./tests/test_data/bop_data/obj_of_interest/train_pbr/000000/rgb/000020.png)
@@ -157,6 +157,7 @@ python scripts/hyperopt.py -c scripts/hyperopt.ini
 ```
 
 ## Credits
+First and foremost, a huge thanks for the creators and contributors of the awesome [Open3D](http://www.open3d.org) package!
 The example data used throughout this project was created with [Blender](https://www.blender.org/) and
 [BlenderProc](https://github.com/DLR-RM/BlenderProc). The former being an awesome open source 3D creation software and
 the latter being an equally awesome open source synthetic training data generator based on Blender targeted at machine
