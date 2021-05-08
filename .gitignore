@@ -133,8 +133,8 @@ dmypy.json
 *.obj
 *.mtl
 tests/test_data/Armchair_01_Textures/
-scripts/best_result_gp.ini
-scripts/hyperopt_results_gp.pkl
+scripts/result*
+scripts/checkpoint.pkl
 
 # IDEA
 .idea/

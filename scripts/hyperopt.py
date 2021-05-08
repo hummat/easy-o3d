@@ -8,11 +8,14 @@ as file paths and evaluated on ground truth transformations.
 
 import configparser
 import os
+import sys
 import time
 import argparse
 from typing import List, Union, Dict, Any, Tuple
 import logging
 import hashlib
+import copy
+import random
 
 import tqdm
 import numpy as np
@@ -28,6 +31,14 @@ logger = logging.getLogger(__name__)
 def get_skopt_space_from_config(config: configparser.ConfigParser) -> List[Union[skopt.space.Categorical,
                                                                                  skopt.space.Real,
                                                                                  skopt.space.Integer]]:
+    """Creates Scikit-Optimize search space from a ConfigParser object.
+
+    Args:
+        config: The ConfigParser object specifying the options and their bounds to optimize.
+
+    Returns:
+        The Scikit-Optimize search space as a list of sample spaces.
+    """
     space = list()
     sections_to_skip = ["default", "optimization", "options", "data"]
     options_to_skip = dict()
@@ -59,32 +70,41 @@ def get_skopt_space_from_config(config: configparser.ConfigParser) -> List[Union
     except (NameError, SyntaxError):
         pass
 
+    optimizer = config.get("optimization", "optimizer")
     for section in config.sections():
         if section.lower() not in sections_to_skip:
             for option, value in config.items(section):
                 if section not in options_to_skip or option not in options_to_skip[section.lower()]:
                     try:
-                        prior = "log-uniform" if 'e' in value and isinstance(eval(value), (float, int)) else "uniform"
+                        name = ': '.join([section, option])
+                        if 'e' in value:
+                            if isinstance(eval(value), tuple) and all(isinstance(v, (float, int)) for v in eval(value)):
+                                prior = "log-uniform"
+                            else:
+                                prior = "uniform"
+                        else:
+                            prior = "uniform"
                         value = eval(value)
 
                         if isinstance(value, list):
                             if option.lower() in ["checkers", "scales", "iterations", "radius_multiplier"]:
-                                if all(isinstance(v, list) for v in value):
-                                    space.append(skopt.space.Categorical(categories=[tuple(v) for v in value],
-                                                                         name=section + option))
+                                if optimizer in ["rnd", "rand", "random"]:
+                                    if all(isinstance(v, list) for v in value):
+                                        space.append(skopt.space.Categorical(categories=[tuple(v) for v in value],
+                                                                             name=name))
                             else:
-                                space.append(skopt.space.Categorical(categories=value, name=section + option))
+                                space.append(skopt.space.Categorical(categories=value, name=name))
                         elif isinstance(value, tuple):
                             if any(isinstance(v, float) for v in value):
                                 space.append(skopt.space.Real(low=value[0],
                                                               high=value[1],
                                                               prior=prior,
-                                                              name=section + option))
+                                                              name=name))
                             else:
                                 space.append(skopt.space.Integer(low=value[0],
                                                                  high=value[1],
                                                                  prior=prior,
-                                                                 name=section + option))
+                                                                 name=name))
                     except (NameError, SyntaxError):
                         pass
     return space
@@ -94,13 +114,23 @@ def set_config_params_with_config_or_dict(config_or_dict_from: Union[configparse
                                           config_to: configparser.ConfigParser,
                                           sections_to_skip: List[str] = list(),
                                           options_to_skip: List[str] = list(),
-                                          add_missing_sections_and_keys: bool = False) -> None:
+                                          add_missing_sections_and_options: bool = False) -> None:
+    """Sets ConfigParser object sections, options and values based on another ConfigParser object or a dict.
+
+    Args:
+        config_or_dict_from: The ConfigParser object or dict to read from.
+        config_to: The ConfigParser object to write to.
+        sections_to_skip: Sections in 'config_or_dict_from' that shouldn't be written to 'config_to'.
+        options_to_skip: Options in 'config_or_dict_from' sections that shouldn't be written to 'config_to'.
+        add_missing_sections_and_options: Sections and/or options only present in 'config_or_dict_from' are added to
+                                          'config_to'.
+    """
     if isinstance(config_or_dict_from, configparser.ConfigParser):
         for section in config_or_dict_from.sections():
             if section not in sections_to_skip:
                 for option, value in config_or_dict_from.items(section):
                     if option not in options_to_skip:
-                        if add_missing_sections_and_keys:
+                        if add_missing_sections_and_options:
                             config_to[section][option] = config_or_dict_from.get(section, option)
                         else:
                             if section in config_to.sections():
@@ -111,10 +141,10 @@ def set_config_params_with_config_or_dict(config_or_dict_from: Union[configparse
             if section not in sections_to_skip:
                 for option, value in config_or_dict_from.items():
                     if section in option:
-                        option = option.replace(section, '')
+                        option = option.replace(section + ': ', '')
                         if option not in options_to_skip:
                             value = getattr(value, "tolist", lambda: value)()
-                            if add_missing_sections_and_keys:
+                            if add_missing_sections_and_options:
                                 if not config_to.has_section(section):
                                     config_to.add_section(section)
                                 config_to[section][option] = str(value)
@@ -126,6 +156,12 @@ def set_config_params_with_config_or_dict(config_or_dict_from: Union[configparse
 
 
 def print_config(config: configparser.ConfigParser, pretty: bool = True) -> None:
+    """Pretty-print ConfigParser object content.
+
+    Args:
+        config: The ConfigParser object.
+        pretty: Pretty-print ConfigParser object sections and options.
+    """
     config_list = list()
     for section in config.sections():
         config_list.append(("", ""))
@@ -151,7 +187,7 @@ def main():
     hyper_config = configparser.ConfigParser(inline_comment_prefixes='#')
     hyper_config.read(args.config)
 
-    # Evaluate config
+    # Set frequent config options
     optimization = hyper_config["optimization"]
     optimizer = optimization.get("optimizer").lower()
     options = hyper_config["options"]
@@ -161,43 +197,59 @@ def main():
     run_config.read("registration.ini")
 
     # Enable verbose output
-    if args.verbose or options.getboolean("verbose"):
+    verbose = args.verbose or options.getboolean("verbose")
+    if verbose:
         logger.setLevel(logging.DEBUG)
+        print_config(hyper_config)
 
     # Set run config with values from hyper config
-    set_config_params_with_config_or_dict(config_or_dict_from=hyper_config,
-                                          config_to=run_config)
+    set_config_params_with_config_or_dict(config_or_dict_from=hyper_config, config_to=run_config)
+    run_config["options"]["verbose"] = str(False)
+    run_config["options"]["progress"] = str(False)
     run_config["options"]["print_results"] = str(False)
     run_config["options"]["return"] = "results+errors"
     run_config["options"]["use_degrees"] = str(False)
+    configs = list()
 
     # Create a Scikit-Optimize search space from the hyper config
     space = get_skopt_space_from_config(config=hyper_config)
-    configs = list()
 
-    # Creates pretty parameter names
-    @skopt.utils.use_named_args(dimensions=space)
-    def get_param_names_from_skopt_space(**params: Dict[str, Any]) -> List[str]:
-        _names = list(params.keys())
-        for _section in run_config.sections():
-            for i, _name in enumerate(_names):
-                if _section in _name:
-                    _names[i] = _name.replace(_section, _section + ': ')
-        return _names
+    # Make a progress bar
+    progress = tqdm.tqdm(range(optimization.getint("n_calls")),
+                         desc=f"Optimization ({optimizer.upper()})",
+                         file=sys.stdout,
+                         disable=not options.getboolean("progress") or verbose)
+
+    def progress_callback(_result: skopt.utils.OptimizeResult) -> None:
+        progress.set_postfix_str(f"Current minimum ({optimization.get('minimize')}): {np.min(_result.func_vals)}")
+        progress.update()
+
+    # Make a checkpointer
+    def checkpoint_callback(_result: skopt.utils.OptimizeResult) -> None:
+        try:
+            if len(_result.x_iters) % 10 == 1:
+                _res = copy.deepcopy(_result)
+                del _res.specs['args']['callback']
+                del _res.specs['args']['func']
+                skopt.dump(res=_res, filename=os.path.join(args.output, "checkpoint.pkl"), compress=True)
+        except Exception as ex:
+            message = f"Couldn't save checkpoint due to exception: {ex}. Skipping."
+            logger.exception(message) if progress.disable else progress.write(message)
 
     # The optimization objective function
     @skopt.utils.use_named_args(dimensions=space)
     def objective(**params: Dict[str, Any]) -> Union[float, Tuple[float, float]]:
         start = time.time()
 
-        if args.verbose or options.getboolean("verbose"):
-            print(tabulate.tabulate(np.expand_dims(list(params.values()), axis=0),
-                                    headers=get_param_names_from_skopt_space(space)))
+        if verbose:
+            print(tabulate.tabulate({"Option": list(params.keys()), "Values": list(params.values())},
+                                    headers="keys",
+                                    missingval="None"))
 
         set_config_params_with_config_or_dict(config_or_dict_from=params,
                                               config_to=run_config,
                                               sections_to_skip=["DEFAULT", "optimization", "options", "data"])
-        configs.append(run_config)
+        configs.append(copy.deepcopy(run_config))
 
         try:
             results = run(config=run_config)
@@ -210,7 +262,7 @@ def main():
                 elif optimization.get("minimize").lower() == "errors_trans":
                     cost = sum(results["errors_trans"])
                 else:
-                    raise ValueError(f"Invalid option '{optimization.get('minimize')}' for 'minimize'.")
+                    raise ValueError(f"Invalid config option '{optimization.get('minimize')}' for 'minimize'.")
             else:
                 if optimization.get("minimize").lower() in ["errors", "errors_rot+errors_trans"]:
                     logger.warning(f"Optimization objective is '{optimization.get('minimize')}' which was not found in "
@@ -223,32 +275,48 @@ def main():
                 elif optimization.get("minimize").lower() == "inlier_rmse":
                     cost = sum([r.inlier_rmse for r in results["results"]])
                 else:
-                    raise ValueError(f"Invalid option '{optimization.get('minimize')}' for 'minimize'.")
+                    raise ValueError(f"Invalid config option '{optimization.get('minimize')}' for 'minimize'.")
         except Exception as ex:
-            logger.warning(f"Caught exception during 'run': {ex}")
+            message = f"Caught exception during execution of 'run_registration.run': {ex}."
+            logger.exception(message) if progress.disable else progress.write(message)
             cost = 1e30
 
-        if np.isnan(cost) or np.isinf(cost) or not np.isfinite(cost):
+        if not np.isfinite(cost):
             cost = 1e30
         if optimizer not in ["rnd", "random"] and optimization.get("acq_func").lower() in ["eips", "pips"]:
             return cost, time.time() - start
         else:
             return cost
 
+    # Load initial points
+    init = optimization.get("init_from_file_or_list")
+    x0, y0 = None, None
+    try:
+        init = eval(init)
+        if init is not None and isinstance(init, (list, tuple)):
+            x0 = init
+            y0 = None
+    except (NameError, SyntaxError):
+        try:
+            init = skopt.load(init)
+            x0 = init.x_iters
+            y0 = init.func_vals
+        except FileNotFoundError:
+            logger.exception(f"Couldn't load initial points from {init}. Skipping.")
+            x0 = None
+            y0 = None
+
     # Run optimization
-    progress = tqdm.tqdm(range(optimization.getint("n_calls")), disable=args.verbose or options.getboolean("verbose"))
-
-    def progress_update(_result: Any):
-        progress.update()
-
-    if optimizer in ["rnd", "random"]:
+    if optimizer in ["rnd", "rand", "random"]:
         result = skopt.dummy_minimize(func=objective,
                                       dimensions=space,
                                       n_calls=optimization.getint("n_calls"),
                                       initial_point_generator=optimization.get("initial_point_generator"),
+                                      x0=x0,
+                                      y0=y0,
                                       random_state=eval(optimization.get("random_state")),
-                                      verbose=args.verbose or options.getboolean("verbose"),
-                                      callback=progress_update)
+                                      verbose=verbose,
+                                      callback=[progress_callback, checkpoint_callback])
     elif all(c in optimizer for c in ['r', 'f']):
         result = skopt.forest_minimize(func=objective,
                                        dimensions=space,
@@ -257,16 +325,18 @@ def main():
                                        n_initial_points=optimization.getint("n_initial_points"),
                                        acq_func=optimization.get("acq_func"),
                                        initial_point_generator=optimization.get("initial_point_generator"),
+                                       x0=x0,
+                                       y0=y0,
                                        random_state=eval(optimization.get("random_state")),
-                                       verbose=args.verbose or options.getboolean("verbose"),
-                                       callback=progress_update,
+                                       verbose=verbose,
+                                       callback=[progress_callback, checkpoint_callback],
                                        n_points=optimization.getint("n_points"),
                                        xi=optimization.getfloat("xi"),
                                        kappa=optimization.getfloat("kappa"),
                                        n_jobs=optimization.getint("n_jobs"))
     elif all(c in optimizer for c in ['g', 'p']):
-        noise = optimization.get("noise").lower() if "gauss" in optimization.get(
-            "noise").lower() else optimization.getfloat("noise")
+        noise = optimization.get("noise").lower()
+        noise = noise if "gauss" in noise else optimization.getfloat("noise")
         result = skopt.gp_minimize(func=objective,
                                    dimensions=space,
                                    n_calls=optimization.getint("n_calls"),
@@ -274,9 +344,11 @@ def main():
                                    acq_func=optimization.get("acq_func"),
                                    acq_optimizer=optimization.get("acq_optimizer"),
                                    initial_point_generator=optimization.get("initial_point_generator"),
+                                   x0=x0,
+                                   y0=y0,
                                    random_state=eval(optimization.get("random_state")),
-                                   verbose=args.verbose or options.getboolean("verbose"),
-                                   callback=progress_update,
+                                   verbose=verbose,
+                                   callback=[progress_callback, checkpoint_callback],
                                    n_points=optimization.getint("n_points"),
                                    n_restarts_optimizer=optimization.getint("n_restarts_optimizer"),
                                    xi=optimization.getfloat("xi"),
@@ -290,72 +362,121 @@ def main():
                                      n_initial_points=optimization.getint("n_initial_points"),
                                      acq_func=optimization.get("acq_func"),
                                      initial_point_generator=optimization.get("initial_point_generator"),
+                                     x0=x0,
+                                     y0=y0,
                                      random_state=eval(optimization.get("random_state")),
-                                     verbose=args.verbose or options.getboolean("verbose"),
-                                     callback=progress_update,
+                                     verbose=verbose,
+                                     callback=[progress_callback, checkpoint_callback],
                                      n_points=optimization.getint("n_points"),
                                      xi=optimization.getfloat("xi"),
                                      kappa=optimization.getfloat("kappa"),
                                      n_jobs=optimization.getint("n_jobs"))
     else:
         raise ValueError(f"Invalid optimizer {optimizer}.")
+    progress.close()
 
     # Print results
-    res = np.concatenate([np.expand_dims(result.func_vals, axis=1), result.x_iters], axis=1)
-    iters = np.argsort(res[:, 0])
-    table_values = res[iters]
-    names = get_param_names_from_skopt_space(space)
-    dims = [f"X_{i}" for i in range(len(names))] if len(names) > 10 else names
-    table_headers = ["Iter", "Cost"] + dims
-    print()
-    print("OPTIMIZATION RESULTS:\n=====================")
-    print(tabulate.tabulate(table_values, headers=table_headers, missingval="None", showindex=list(iters)))
-    if len(names) > 10:
+    names = None
+    dims = None
+    try:
+        res = np.concatenate([np.expand_dims(result.func_vals, axis=1), result.x_iters], axis=1)
+        iters = np.argsort(res[:, 0])
+        table_values = res[iters]
+        names = [dim.name for dim in space]
+        dims = [f"X_{i}" for i in range(len(names))] if len(names) > 10 else names
+        table_headers = ["Iter", "Cost"] + dims
         print()
-        print("DIMENSIONS <-> NAMES:\n=====================")
-        print(tabulate.tabulate({"Dimension": dims, "Name": names}, headers="keys"))
+        print("OPTIMIZATION RESULTS:\n====================")
+        print(tabulate.tabulate(table_values, headers=table_headers, missingval="None", showindex=list(iters)))
+        if len(names) > 10:
+            print()
+            print("DIMENSIONS <-> NAMES:\n====================")
+            print(tabulate.tabulate({"Dimension": dims, "Name": names}, headers="keys"))
+    except Exception as e:
+        logger.exception(f"Printing of results failed due to exception: {e}. Trying to save results.")
 
     # Visualize results
-    if args.draw or options.getboolean("draw"):
-        if len(names) > 5:
-            logger.info("Drawing visualizations for {len(names)} dimensions. This can take some time.")
-        from matplotlib import pyplot as plt
-        plot_convergence(result)
-        plot_evaluations(result, dimensions=dims)
-        if optimizer not in ["rnd", "random"]:
-            plot_objective(result, dimensions=dims)
-        plt.show()
+    if (args.draw or options.getboolean("draw")) and names is not None:
+        try:
+            if len(names) > 5:
+                logger.info(f"Drawing visualizations for upt to 10 dimensions. This can take some time.")
+            from matplotlib import pyplot as plt
+            plot_convergence(result)
+            try:
+                plot_dims = eval(options.get("plot_dims"))
+                if isinstance(plot_dims, float):
+                    plot_dims = int(plot_dims)
+                elif isinstance(plot_dims, int) or plot_dims is None:
+                    pass
+                else:
+                    raise TypeError(f"'plot_dims' must by None or int but is {type(plot_dims)}. Skipping selection.")
+            except (NameError, SyntaxError, TypeError):
+                plot_dims = None
+            if (plot_dims is None and len(names) > 10) or (isinstance(plot_dims, int) and plot_dims > 10):
+                logger.info(f"Too many dimensions ({len(names)}) for 'evaluations' and 'objective' plots. "
+                            f"Only drawing the first 10.")
+                plot_dims = 10
+            if isinstance(plot_dims, int):
+                plot_dims = names[:plot_dims]
+            else:
+                plot_dims = None
+            plot_evaluations(result, dimensions=dims if plot_dims is None else plot_dims, plot_dims=plot_dims)
+            if optimizer not in ["rnd", "rand", "random"]:
+                plot_objective(result, dimensions=dims if plot_dims is None else plot_dims, plot_dims=plot_dims)
+            else:
+                logger.info(f"Can't plot 'objective' for optimizer '{optimizer}'.")
+            plt.show()
+        except Exception as e:
+            logger.exception(f"Drawing failed due to exception: {e}. Skipping.")
 
-    if options.getboolean("save"):
-        # Save best result config
-        if options.getboolean("overwrite"):
-            config_hash = str().join([value for option, value in hyper_config.items("data")])
-        else:
-            config_hash = str()
-            for section in hyper_config.sections():
-                for option, value in hyper_config.items(section):
-                    config_hash += value
-        config_hash = hashlib.md5(config_hash.encode('utf-8')).hexdigest()
-        best_config = configs[np.argmin(result.func_vals)]
-
-        best_config["options"]["print_results"] = str(True)
-        output_path = os.path.join(args.output, f"best_result_{config_hash}.ini")
-        with open(output_path, 'w') as configfile:
-            best_config.write(configfile)
+    # Save best result config
+    filename = None
+    config_hash = None
+    if options.getboolean("save") or names is None:
+        try:
+            filename = options.get("filename")
+            try:
+                filename = eval(filename)
+            except (NameError, SyntaxError):
+                if filename.lower() == "none":
+                    filename = None
+            best_config = configs[np.argmin(result.func_vals)]
+            best_config["options"]["progress"] = str(True)
+            best_config["options"]["print_results"] = str(True)
+            if filename is None:
+                if options.getboolean("overwrite"):
+                    config_hash = str().join([value for option, value in hyper_config.items("data")])
+                else:
+                    config_hash = str()
+                    for section in hyper_config.sections():
+                        for option, value in hyper_config.items(section):
+                            config_hash += value
+                config_hash = hashlib.md5(config_hash.encode('utf-8')).hexdigest()
+                output_path = os.path.join(args.output, f"{config_hash}.ini")
+            else:
+                output_path = os.path.join(args.output, f"{filename}.ini")
+            with open(output_path, 'w') as configfile:
+                best_config.write(configfile)
+        except Exception as e:
+            config_hash = hex(random.getrandbits(128))
+            logger.exception(f"Saving of best result failed due to exception: {e}. Trying to dump all results.")
 
         # Save results
-        output_path = os.path.join(args.output, f"hyperopt_results_{config_hash}.pkl")
+        if filename is None:
+            output_path = os.path.join(args.output, f"{config_hash}.pkl")
+        else:
+            output_path = os.path.join(args.output, f"{filename}.pkl")
         try:
             del result.specs['args']['callback']
-            skopt.dump(res=result, filename=output_path)
+            skopt.dump(res=result, filename=output_path, compress=True)
         except Exception as e:
             logger.debug(f"Caught exception during 'skopt.dump': {e}")
             logger.debug("Trying to store the result without the objective.")
-            skopt.dump(res=result, filename=output_path, store_objective=False)
+            skopt.dump(res=result, filename=output_path, store_objective=False, compress=True)
         finally:
             logger.debug("Deleting the objective.")
             del result.specs['args']['func']
-            skopt.dump(res=result, filename=output_path)
+            skopt.dump(res=result, filename=output_path, compress=True)
 
 
 if __name__ == "__main__":

@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Performs point cloud registration using registration algorithms from this package."""
+import sys
 
 from easy_o3d import utils, registration, set_logger_level
 import os
@@ -33,36 +34,58 @@ def eval_config(config: configparser.ConfigParser) -> Dict[str, Dict[str, Any]]:
                 if isinstance(values, list):
                     if section.lower() in ["source_params", "target_params"]:
                         if option.lower() == "sample_type":
-                            uniform = utils.SampleTypes.UNIFORMLY
-                            disk = utils.SampleTypes.POISSON_DISK
-                            values = [uniform if "uniform" in value.lower() else disk for value in values]
+                            _values = list()
+                            for value in values:
+                                if value is None or value.lower() == "none":
+                                    _values.append(None)
+                                elif "uniform" in value.lower():
+                                    _values.append(utils.SampleTypes.UNIFORMLY)
+                                elif "disk" in value.lower():
+                                    _values.append(utils.SampleTypes.POISSON_DISK)
+                            values = _values
                     elif section.lower() in ["feature_processing", "source_processing", "target_processing"]:
                         if option.lower() == "search_param":
                             _values = list()
                             for value in values:
-                                if value.lower() == "hybrid":
+                                if value is None or value.lower() == "none":
+                                    _values.append(None)
+                                elif "hybrid" in value.lower():
                                     _values.append(utils.SearchParamTypes.HYBRID)
-                                elif value.lower() == "knn":
+                                elif "knn" in value.lower():
                                     _values.append(utils.SearchParamTypes.KNN)
-                                elif value.lower() == "radius":
+                                elif "radius" in value.lower():
                                     _values.append(utils.SearchParamTypes.RADIUS)
                             values = _values
                         elif option.lower() == "downsample":
-                            uniform = utils.DownsampleTypes.UNIFORM
-                            voxel = utils.DownsampleTypes.VOXEL
-                            values = [uniform if "uniform" in value.lower() else voxel for value in values]
+                            _values = list()
+                            for value in values:
+                                if value is None or value.lower() == "none":
+                                    _values.append(None)
+                                elif "uniform" in value.lower():
+                                    _values.append(utils.DownsampleTypes.UNIFORM)
+                                elif "voxel" in value.lower():
+                                    _values.append(utils.DownsampleTypes.VOXEL)
+                            values = _values
                         elif option.lower() == "remove_outlier":
-                            statistic = utils.OutlierTypes.STATISTICAL
-                            radius = utils.OutlierTypes.RADIUS
-                            values = [statistic if "statistic" in value.lower() else radius for value in values]
+                            _values = list()
+                            for value in values:
+                                if value is None or value.lower() == "none":
+                                    _values.append(None)
+                                elif "statistic" in value.lower():
+                                    _values.append(utils.OutlierTypes.STATISTICAL)
+                                elif "radius" in value.lower():
+                                    _values.append(utils.OutlierTypes.RADIUS)
+                            values = _values
                         if option.lower() == "orient_normals":
                             _values = list()
                             for value in values:
-                                if value.lower() == "tangent":
+                                if value is None or value.lower() == "none":
+                                    _values.append(None)
+                                elif "tangent" in value.lower():
                                     _values.append(utils.OrientationTypes.TANGENT_PLANE)
-                                elif value.lower() == "camera":
+                                elif "camera" in value.lower():
                                     _values.append(utils.OrientationTypes.CAMERA)
-                                elif value.lower() == "direction":
+                                elif "direction" in value.lower():
                                     _values.append(utils.OrientationTypes.DIRECTION)
                             values = _values
                     elif section.lower() == "initializer_params":
@@ -283,11 +306,16 @@ def run(config: Union[configparser.ConfigParser, None] = None) -> Dict[str, Any]
                                        init_list=init_list,
                                        one_vs_one=data["one_vs_one"],
                                        n_times=initializer_params["n_times"],
+                                       multi_scale=initializer_params["multi_scale"],
+                                       source_scales=initializer_params["scales"],
+                                       iterations=initializer_params["iterations"],
+                                       radius_multiplier=initializer_params["radius_multiplier"],
                                        draw=initializer_params["draw"] or (args.draw and algorithms["refiner"] is None),
                                        overwrite_colors=initializer_params["overwrite_colors"],
                                        search_param=feature_processing["search_param"],
                                        search_param_knn=feature_processing["search_param_knn"],
-                                       search_param_radius=feature_processing["search_param_radius"])
+                                       search_param_radius=feature_processing["search_param_radius"],
+                                       progress=options["progress"] and not (args.verbose or options["verbose"]))
         init_list = [result.transformation for result in results]
     if algorithms["refiner"] is not None:
         logger.debug(f"Running refiner {refiner.name}.")
@@ -303,7 +331,8 @@ def run(config: Union[configparser.ConfigParser, None] = None) -> Dict[str, Any]
                                    crop_target_around_source=refiner_params["crop_target_around_source"],
                                    crop_scale=refiner_params["crop_scale"],
                                    draw=refiner_params["draw"] or args.draw,
-                                   overwrite_colors=refiner_params["overwrite_colors"])
+                                   overwrite_colors=refiner_params["overwrite_colors"],
+                                   progress=options["progress"] and not (args.verbose or options["verbose"]))
     logger.debug(f"Execution took {time.time() - start} seconds.")
 
     # Load ground truth data
@@ -331,7 +360,7 @@ def run(config: Union[configparser.ConfigParser, None] = None) -> Dict[str, Any]
             else:
                 errors.append(('?', '?'))
     else:
-        assert len(results) == len(source_list) * len(target_list), \
+        assert len(results) == len(source_list) * len(target_list),\
             f"'len(results)' must equal 'len(source_list) * len(target_list)."
         estimates = [T.transformation for T in results]
         for i in range(len(target_list)):
@@ -363,6 +392,8 @@ def run(config: Union[configparser.ConfigParser, None] = None) -> Dict[str, Any]
                                            "# corresp.",
                                            f"error rot. {'[deg]' if options['use_degrees'] else '[rad]'}",
                                            "error trans. [m]"])
+        print()
+        print("RESULTS:\n=======")
         print(table)
 
     # Return results

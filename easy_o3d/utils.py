@@ -386,6 +386,12 @@ def read_point_cloud(filename: str, **kwargs: Any) -> PointCloud:
     Returns:
         The point cloud data read from file.
     """
+    if filename.endswith(".np") or filename.endswith(".npz"):
+        potential_points = np.load(filename)
+        if potential_points.shape[1] in [3, 6, 9]:
+            return get_point_cloud_from_points(points=potential_points)
+        else:
+            raise ValueError(f"Numpy array read from file has shape {potential_points.shape} which is not supported.")
     return o3d.io.read_point_cloud(filename=filename,
                                    format=kwargs.get("format", 'auto'),
                                    remove_nan_points=kwargs.get("remove_nan_points", True),

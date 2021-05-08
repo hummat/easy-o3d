@@ -10,12 +10,14 @@ Classes:
 import copy
 import hashlib
 import logging
+import sys
 from abc import ABC, abstractmethod
 from typing import Any, Union, Dict, Tuple, List
 import time
 from enum import Flag, auto
 from joblib import Parallel, delayed
 from multiprocessing import cpu_count
+import tqdm
 
 import numpy as np
 import open3d as o3d
@@ -389,7 +391,7 @@ class RegistrationInterface(ABC):
         start = time.time()
         if target_scales is None:
             target_scales = source_scales
-        assert len(source_scales) == len(iterations) == len(target_scales), \
+        assert len(source_scales) == len(iterations) == len(target_scales),\
             "Need to provide same number of 'source_scales', 'target_scales' and 'iterations'."
 
         _source = self._eval_data(data_key_or_value=source, **kwargs)
@@ -466,6 +468,7 @@ class RegistrationInterface(ABC):
                  n_times: int = 1,
                  multi_scale: bool = False,
                  multi_thread_preload: bool = True,
+                 progress: bool = True,
                  **kwargs: Any) -> List[MyRegistrationResult]:
         """Convenience function to register multiple sources and targets. Takes accepts all arguments accepted by `run`.
 
@@ -477,6 +480,7 @@ class RegistrationInterface(ABC):
             n_times: How often to run before returning best result. Further documentation at `run_n_times`.
             multi_scale: Use multi-scale registration instead of single scale.
             multi_thread_preload: If input type is string, pre-loads data from disk in parallel using multi-threading.
+            progress: Print progress bar.
 
         Returns:
             A list of registration results between
@@ -506,7 +510,10 @@ class RegistrationInterface(ABC):
         if one_vs_one and len(source_list) == len(target_list):
             if is_list:
                 assert len(init_list) == len(source_list), f"'init_list' and 'source_list' must have equal length."
-            for source, target in zip(source_list, target_list):
+            for source, target in tqdm.tqdm(zip(source_list, target_list),
+                                            desc=self.name,
+                                            file=sys.stdout,
+                                            disable=not progress):
                 if n_times == 1:
                     if multi_scale:
                         results.append(self.run_multi_scale(source=source,
@@ -531,6 +538,10 @@ class RegistrationInterface(ABC):
             if is_list:
                 assert len(init_list) == len(source_list) * len(target_list),\
                     f"'len(init_list)' must equal 'len(source_list) * len(target_list)."
+            progress = tqdm.tqdm(range(len(source_list) * len(target_list)),
+                                 file=sys.stdout,
+                                 desc=self.name,
+                                 disable=not progress)
             for target in target_list:
                 for source in source_list:
                     if n_times == 1:
@@ -551,5 +562,7 @@ class RegistrationInterface(ABC):
                                                         n_times=n_times,
                                                         multi_scale=multi_scale,
                                                         **kwargs))
+                    progress.update()
+            progress.close()
         logger.debug(f"`run_many` took {time.time() - start} seconds.")
         return results
