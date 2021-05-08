@@ -130,9 +130,11 @@ dmypy.json
 
 # Test data
 *.blend*
+*.obj
+*.mtl
 tests/test_data/Armchair_01_Textures/
-tests/test_data/bop_data/
-tests/test_data/coco_data/
+scripts/result*
+scripts/checkpoint.pkl
 
 # IDEA
 .idea/
