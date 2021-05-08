@@ -23,8 +23,8 @@ We are also given a 3D model of Suzanne (the `source`) and a depth image of the 
 
 ![](./tests/test_data/test_data.png)
 
-The goal is rotate and move the `source` around until it matches the position and rotation of the corresponding points
-the `target`. A successful registration looks like this:
+The goal is to rotate and move the `source` around until it matches the position and rotation of the corresponding
+points the `target`. A successful registration looks like this:
 
 ![](./tests/test_data/registration_result.png)
 
