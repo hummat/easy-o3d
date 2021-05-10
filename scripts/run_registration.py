@@ -103,7 +103,10 @@ def eval_config(config: configparser.ConfigParser) -> Dict[str, Dict[str, Any]]:
                     values = None
                 elif section.lower() in ["data", "source_params", "target_params"]:
                     if option.lower() in ["source_files", "target_files"]:
-                        values = [values] if os.path.exists(values) else sorted(glob.glob(values))
+                        _values = [values] if os.path.exists(values) else sorted(glob.glob(values))
+                        if len(_values) == 0:
+                            raise FileNotFoundError(f"No files found at {values}.")
+                        values = _values
                     elif option.lower() in ["ground_truth", "init_poses", "camera_intrinsic", "camera_extrinsic"]:
                         if os.path.exists(values):
                             if "scene_gt.json" in values.lower():
@@ -190,7 +193,9 @@ def run(config: Union[configparser.ConfigParser, None] = None) -> Dict[str, Any]
     # Evaluate command line arguments
     start = time.time()
     parser = argparse.ArgumentParser(description="Performs point cloud registration.")
-    parser.add_argument("-c", "--config", default="registration.ini", type=str, help="Path to registration config.")
+    parser.add_argument("-c", "--config",
+                        default=os.path.join(os.path.dirname(os.path.abspath(__file__)), "registration.ini"), type=str,
+                        help="Path to registration config.")
     parser.add_argument("-v", "--verbose", action="store_true", help="Get verbose output during execution.")
     parser.add_argument("-d", "--draw", action="store_true", help="Visualize registration results.")
     args = parser.parse_args()

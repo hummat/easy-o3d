@@ -23,7 +23,7 @@ import skopt
 from skopt.plots import plot_convergence, plot_evaluations, plot_objective
 import tabulate
 
-from run_registration import run
+from .run_registration import run
 
 logger = logging.getLogger(__name__)
 
@@ -175,12 +175,13 @@ def print_config(config: configparser.ConfigParser, pretty: bool = True) -> None
 
 def main():
     # Evaluate command line arguments
+    cd = os.path.dirname(os.path.abspath(__file__))
     parser = argparse.ArgumentParser(description="Performs point cloud registration.")
-    parser.add_argument("-c", "--config", default="hyperopt.ini", type=str, help="/path/to/hyperopt.ini.")
+    parser.add_argument("-c", "--config", default=os.path.join(cd, "hyperopt.ini"), type=str,
+                        help="/path/to/hyperopt.ini.")
     parser.add_argument("-v", "--verbose", action="store_true", help="Get verbose output during execution.")
     parser.add_argument("-d", "--draw", action="store_true", help="Visualize results results.")
-    parser.add_argument("-o", "--output", default=os.path.join(os.path.dirname(os.path.abspath(__file__)), "output"),
-                        type=str, help="/path/to/output/dir")
+    parser.add_argument("-o", "--output", default=os.path.join(cd, "output"), type=str, help="/path/to/output/dir")
     args = parser.parse_args()
 
     # Read hyperparameter optimization config (hyper config) from argument
@@ -194,7 +195,7 @@ def main():
 
     # Read config from argument or file
     run_config = configparser.ConfigParser(inline_comment_prefixes='#')
-    run_config.read("registration.ini")
+    run_config.read(os.path.join(cd, "registration.ini"))
 
     # Enable verbose output
     verbose = args.verbose or options.getboolean("verbose")
