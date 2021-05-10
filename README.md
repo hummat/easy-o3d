@@ -32,10 +32,10 @@ The `source` (red) and `target` (gray) point clouds overlap, indicating a tight 
 
 ## Highlights
 1. High-level wrappers around
-   [global pose estimation](https://github.com/hummat/easy-o3d/blob/22f760c46450b1e6e4a595ae9d79aa6846c0cda6/easy_o3d/registration.py#L208) and
-   [pose refinement](https://github.com/hummat/easy-o3d/blob/22f760c46450b1e6e4a595ae9d79aa6846c0cda6/easy_o3d/registration.py#L65).
+   [global pose estimation](https://github.com/hummat/easy-o3d/blob/71d68db0c564b95014d168c61e43666418b1571d/easy_o3d/registration.py#L288) and
+   [pose refinement](https://github.com/hummat/easy-o3d/blob/71d68db0c564b95014d168c61e43666418b1571d/easy_o3d/registration.py#L61).
 2. Seamless and flexible
-   [data loading](https://github.com/hummat/easy-o3d/blob/22f760c46450b1e6e4a595ae9d79aa6846c0cda6/easy_o3d/utils.py#L92)
+   [data loading](https://github.com/hummat/easy-o3d/blob/71d68db0c564b95014d168c61e43666418b1571d/easy_o3d/utils.py#L112)
    from various input formats as well as further
    [utility functionality](https://github.com/hummat/easy-o3d/blob/master/easy_o3d/utils.py).
 3. Flexible, fast and easy-to-use [scripts](https://github.com/hummat/easy-o3d/tree/master/scripts) to obtain the 6D
@@ -47,16 +47,16 @@ The simplest way to install the package is to clone the repository to a local di
 ```commandline
 git clone https://github.com/hummat/easy-o3d
 ```
-and use Pythons package manager `pip` to install it into your current Python environment:
+Use Pythons package manager `pip` to install it into your current Python environment:
 ```commandline
 pip install /path/to/easy-o3d/repository/clone
 ```
-To use the [hyperparameter optimization script](https://github.com/hummat/easy-o3d/blob/master/scripts/hyperopt.py),
-also install the optional dependency `scikit-optimize`:
+To use the provided [scripts](https://github.com/hummat/easy-o3d/tree/master/scripts),
+also install the optional dependency `scikit-optimize` and `tabulate`:
 ```commandline
-pip install /path/to/easy-o3d/repository/clone[hyper]
+pip install -e /path/to/easy-o3d/repository/clone[scripts]
 ```
-(or manually with `pip install scikit-optimize`).
+(or manually with `pip install scikit-optimize tabulate`).
 
 Alternatively, you can install the [required packages](https://github.com/hummat/easy-o3d/blob/master/requirements.txt)
 manually and directly import the code from your local clone of the repository:
@@ -64,11 +64,10 @@ manually and directly import the code from your local clone of the repository:
 pip install /path/to/requirements.txt
 ```
 The required packages (and their version used during development) are:
-1. `numpy == 1.20.2`
-2. `open3d == 0.12.0`
-3. (`scikit-optimize == 0.8.1`)
+1. `open3d == 0.12.0`
+2. (`scikit-optimize == 0.8.1`, `tabulate == 0.8.9`)
 ```commandline
-pip install numpy==1.20.2 open3d==0.12.0 scikit-optimize==0.8.1
+pip install open3d==0.12.0 scikit-optimize==0.8.1 tabulate==0.8.9
 ```
 
 ## Usage
@@ -139,9 +138,15 @@ error = utils.get_transformation_error(transformation_estimate=icp_result.transf
 ### 2. Stand-alone using the provided scripts
 The [`registration.py`](https://github.com/hummat/easy-o3d/tree/master/scripts/registration.py) script takes
 a [`registration.ini`](https://github.com/hummat/easy-o3d/tree/master/scripts/registration.ini) file as input in which
-paths to source and target data as well as all registration hyperparameters are specified.
+paths to source and target data as well as all registration hyperparameters are specified. Provided file paths can
+either be absolute, or, if relative, must be so in relation to the directory the script is run from.
+To run the script, simply use the provided entry point:
 ```commandline
-python scripts/registration.py -c scripts/registration.ini
+run -c /path/to/registration.ini
+```
+Alternatively, run it as a Python module, e.g. from within the cloned repository:
+```commandline
+python -m scripts.run -c /path/to/registration.ini
 ```
 
 To find a suitable set of hyperparameters, the
@@ -151,9 +156,11 @@ To find a suitable set of hyperparameters, the
 ranges of values to search over, and produces a
 [`registration.ini`](https://github.com/hummat/easy-o3d/tree/master/scripts/registration.ini) as output with the optimal
 parameter values found during the hyperparameter search. This can in turn directly be used as input to the
-[`registration.py`](https://github.com/hummat/easy-o3d/tree/master/scripts/registration.py) script.
+[`registration.py`](https://github.com/hummat/easy-o3d/tree/master/scripts/registration.py) script. Again, there are
+two ways to run the script:
 ```commandline
-python scripts/hyperopt.py -c scripts/hyperopt.ini
+hyperopt -c /path/to/hyperopt.ini
+python -m scripts.hyperopt -c /path/to/hyperopt.ini
 ```
 
 ## Credits
