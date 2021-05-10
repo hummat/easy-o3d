@@ -178,9 +178,9 @@ def main():
     parser = argparse.ArgumentParser(description="Performs point cloud registration.")
     parser.add_argument("-c", "--config", default="hyperopt.ini", type=str, help="/path/to/hyperopt.ini.")
     parser.add_argument("-v", "--verbose", action="store_true", help="Get verbose output during execution.")
-    parser.add_argument("-d", "--draw", action="store_true", help="Visualize hyperopt results.")
-    parser.add_argument("-o", "--output", default=os.path.dirname(os.path.abspath(__file__)), type=str,
-                        help="/path/to/output/dir")
+    parser.add_argument("-d", "--draw", action="store_true", help="Visualize results results.")
+    parser.add_argument("-o", "--output", default=os.path.join(os.path.dirname(os.path.abspath(__file__)), "output"),
+                        type=str, help="/path/to/output/dir")
     args = parser.parse_args()
 
     # Read hyperparameter optimization config (hyper config) from argument

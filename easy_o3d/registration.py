@@ -90,7 +90,9 @@ class IterativeClosestPoint(RegistrationInterface):
                  with_scaling: bool = False,
                  kernel: Union[KernelTypes, None] = None,
                  kernel_noise_std: float = 0.1,
-                 data_to_cache: Union[Dict[Any, InputTypes], None] = None) -> None:
+                 data_to_cache: Union[Dict[Any, InputTypes], None] = None,
+                 auto_cache: bool = True,
+                 cache_size: int = 100) -> None:
         """
         Args:
             relative_fitness: If relative change (difference) of fitness score is lower than `relative_fitness`,
@@ -104,8 +106,13 @@ class IterativeClosestPoint(RegistrationInterface):
             kernel: Use robust kernel in Point-to-Plane ICP to deal with noise.
             kernel_noise_std: The estimated/assumed noise standard deviation in the target data used in `kernel`.
             data_to_cache: Data to be cached. Refer to base class for details.
+            auto_cache: Automatically cache anything passing trough this function that is not already cached.
+            cache_size: Maximum number of elements allowed in cache.
         """
-        super().__init__(name="ICP", data_to_cache=data_to_cache)
+        super().__init__(name="ICP",
+                         data_to_cache=data_to_cache,
+                         auto_cache=auto_cache,
+                         cache_size=cache_size)
 
         self.relative_fitness = relative_fitness
         self.relative_rmse = relative_rmse
@@ -264,7 +271,8 @@ class IterativeClosestPoint(RegistrationInterface):
                                 estimation_method=self._estimation_method,
                                 criteria=self.criteria)
 
-        logger.debug(f"{self.name} took {time.time() - start} seconds.")
+        runtime = time.time() - start
+        logger.debug(f"{self.name} took {runtime} seconds.")
         logger.debug(f"{self.name} result: fitness={result.fitness}, inlier_rmse={result.inlier_rmse}.")
 
         if draw:
@@ -274,7 +282,7 @@ class IterativeClosestPoint(RegistrationInterface):
                                     fitness=result.fitness,
                                     inlier_rmse=result.inlier_rmse,
                                     transformation=result.transformation,
-                                    runtime=time.time() - start)
+                                    runtime=runtime)
 
 
 class FastGlobalRegistration(RegistrationInterface):
@@ -298,14 +306,21 @@ class FastGlobalRegistration(RegistrationInterface):
     def __init__(self,
                  max_iteration: int = 64,
                  max_correspondence_distance: float = 0.005,  # 5mm
-                 data_to_cache: Union[Dict[Any, InputTypes], None] = None) -> None:
+                 data_to_cache: Union[Dict[Any, InputTypes], None] = None,
+                 auto_cache: bool = True,
+                 cache_size: int = 100) -> None:
         """
         Args:
             max_iteration: Maximum number of iterations before the algorithm is stopped.
             max_correspondence_distance: Maximum correspondence points-pair distance.
             data_to_cache: Data to be cached. Refer to base class for details.
+            auto_cache: Automatically cache anything passing trough this function that is not already cached.
+            cache_size: Maximum number of elements allowed in cache.
         """
-        super().__init__(name="FGR", data_to_cache=data_to_cache)
+        super().__init__(name="FGR",
+                         data_to_cache=data_to_cache,
+                         auto_cache=auto_cache,
+                         cache_size=cache_size)
 
         self.max_correspondence_distance = max_correspondence_distance
         self.max_iteration = max_iteration
@@ -409,7 +424,8 @@ class FastGlobalRegistration(RegistrationInterface):
                                 target_feature=_target_feature,
                                 option=self.option)
 
-        logger.debug(f"{self.name} took {time.time() - start} seconds.")
+        runtime = time.time() - start
+        logger.debug(f"{self.name} took {runtime} seconds.")
         logger.debug(f"{self.name} result: fitness={result.fitness}, inlier_rmse={result.inlier_rmse}.")
 
         if draw:
@@ -419,7 +435,7 @@ class FastGlobalRegistration(RegistrationInterface):
                                     fitness=result.fitness,
                                     inlier_rmse=result.inlier_rmse,
                                     transformation=result.transformation @ _init,
-                                    runtime=time.time() - start)
+                                    runtime=runtime)
 
 
 class RANSAC(RegistrationInterface):
@@ -464,7 +480,9 @@ class RANSAC(RegistrationInterface):
                  checkers: Union[List[CheckerTypes], Tuple[CheckerTypes]] = (CheckerTypes.EDGE, CheckerTypes.DISTANCE),
                  similarity_threshold: float = 0.9,
                  normal_angle_threshold: float = 30.0,
-                 data_to_cache: Union[Dict[Any, InputTypes], None] = None) -> None:
+                 data_to_cache: Union[Dict[Any, InputTypes], None] = None,
+                 auto_cache: bool = True,
+                 cache_size: int = 100) -> None:
         """
         Args:
             algorithm: The type of RANSAC registration algorithm used in `run`.
@@ -480,8 +498,13 @@ class RANSAC(RegistrationInterface):
             similarity_threshold: Edge length similarity checker threshold.
             normal_angle_threshold: Normal angle similarity checker threshold in degrees.
             data_to_cache: Data to be cached. Refer to base class for details.
+            auto_cache: Automatically cache anything passing trough this function that is not already cached.
+            cache_size: Maximum number of elements allowed in cache.
         """
-        super().__init__(name="RANSAC", data_to_cache=data_to_cache)
+        super().__init__(name="RANSAC",
+                         data_to_cache=data_to_cache,
+                         auto_cache=auto_cache,
+                         cache_size=cache_size)
 
         self.max_iteration = max_iteration
         self.confidence = confidence
@@ -650,7 +673,8 @@ class RANSAC(RegistrationInterface):
                                 checkers=self._eval_checkers(**kwargs),
                                 criteria=self.criteria)
 
-        logger.debug(f"{self.name} took {time.time() - start} seconds.")
+        runtime = time.time() - start
+        logger.debug(f"{self.name} took {runtime} seconds.")
         logger.debug(f"{self.name} result: fitness={result.fitness}, inlier_rmse={result.inlier_rmse}.")
 
         if draw:
@@ -663,4 +687,4 @@ class RANSAC(RegistrationInterface):
                                     fitness=result.fitness,
                                     inlier_rmse=result.inlier_rmse,
                                     transformation=result.transformation @ _init,
-                                    runtime=time.time() - start)
+                                    runtime=runtime)

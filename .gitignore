@@ -133,8 +133,7 @@ dmypy.json
 *.obj
 *.mtl
 tests/test_data/Armchair_01_Textures/
-scripts/result*
-scripts/checkpoint.pkl
+scripts/output
 
 # IDEA
 .idea/

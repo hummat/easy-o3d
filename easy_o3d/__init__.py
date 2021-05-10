@@ -10,13 +10,16 @@ Classes:
     registration.IterativeClosestPoint: The Iterative Closest Point (ICP) algorithm.
     registration.FastGlobalRegistration: The Fast Global Registration (FGR) algorithm.
     registration.RANSAC: The RANSAC algorithm.
-    registration.ICPTypes: Supported ICP registration types.
     registration.CheckerTypes: Supported RANSAC correspondence checker types.
     registration.KernelTypes: Supported ICP Point-To-Plane robust kernel types.
     interfaces.RegistrationInterface: Interface for all registration classes.
-    utils.ValueTypes: Default value flags to increase readability.
+    interfaces.ICPTypes: Supported ICP registration types.
+    interfaces.MetricTypes: Supported registration quality metric types.
+    interfaces.MyRegistrationResult: Helper class mimicking Open3D's `RegistrationResult` but mutable and with added
+                                     runtime.
     utils.SampleTypes: Supported types of point cloud sampling from meshes.
     utils.DownsampleTypes: Supported point cloud downsampling types.
+    utils.OutlierTypes: Supported outlier removal types.
     utils.SearchParamTypes: Supported normal and FPFH feature computation search parameter types.
     utils.OrientationTypes: Supported normal orientation types.
 
@@ -24,6 +27,7 @@ Functions:
     get_logger: Returns the package-wide logger
     set_logger_level: Sets the package-wide logger level.
     utils.eval_data: Convenience function that automatically determines the data type and loads the data accordingly.
+    utils.eval_data_parallel: Evaluates a list of inputs in parallel using multi-threading.
     utils.process_point_cloud: Utility function to apply various processing steps on point cloud data.
     utils.read_point_cloud: Reads point cloud data from file.
     utils.read_triangle_mesh: Reads triangle mesh data from file.
