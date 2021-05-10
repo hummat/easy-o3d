@@ -1,5 +1,5 @@
 # Easy Open3D
-Welcome to Easy Open3D (the easy-to-use wrapper around) as well as utility functions and scripts for, some of
+Welcome to Easy Open3D the easy-to-use wrapper around (as well as utility functions and scripts for) some of
 [Open3D](http://www.open3d.org) 's registration functionality.
 
 _Head over to the repository's [**GitHub** pages site](https://hummat.github.io/easy-o3d) for a more interactive

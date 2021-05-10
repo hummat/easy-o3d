@@ -8,7 +8,6 @@ Classes:
 """
 
 import copy
-import hashlib
 import logging
 import sys
 from abc import ABC, abstractmethod
@@ -72,40 +71,61 @@ class RegistrationInterface(ABC):
 
     Attributes:
         name: The name of the registration algorithm.
+        auto_cache: Automatically cache anything passing trough this function that is not already cached.
+        cache_size: Maximum number of elements allowed in cache.
+        _parallel: Thread pool.
         _cached_data: A dictionary for caching data used during registration.
 
     Methods:
+        parallel: Lazy-loading of multi-thread parallel pool as class property.
         _eval_data(data_key_or_value): Adds caching to `utils.eval_data`.
+        _eval_data_parallel(data_keys_or_values): Runs _eval_data in parallel threads.
         _compute_dist(point_cloud): Returns maximum correspondence distance for registration based on `point_cloud`
                                     size.
         add_to_cache(data, replace): Adds `data.values()` to cache, replacing data with existing dict keys if `replace`
                                      is set to `True`.
         replace_in_cache(data): Replaces `data.values()` for existing keys.
-        get_from_cache(data_key): Returns value for `data_key` from cache.
+        get_cache_value(data_key): Returns value for `data_key` from cache.
+        get_cache_key(data_value): Returns key for `cached_value` from cache.
+        is_in_cache(data_key_or_value): Checks if key is in cached data.
         draw_registration_result(source, target, pose, ...): Visualizes the registration result of `source` being
                                                              aligned with `target` using `pose`.
         run(source, target): Runs the registration algorithm of the derived class.
+        run_n_times(source, target, n_times): Runs the registration algorithm of the derived class N times.
+        run_multi_scale(source, target): Runs the instantiated registration method at multiple scales.
+        run_many(source_list, target_list): Convenience function to register multiple sources and targets.
+                                            Wraps `run`, `run_n_times`, `run_multi_scale`.
     """
 
-    def __init__(self, name: str, data_to_cache: Union[Dict[Any, InputTypes], None] = None) -> None:
+    def __init__(self,
+                 name: str,
+                 data_to_cache: Union[Dict[Any, InputTypes], None] = None,
+                 auto_cache: bool = True,
+                 cache_size: int = 100) -> None:
         """
         Args:
             name: The name of the registration algorithm.
             data_to_cache: The data to be cached.
+            auto_cache: Automatically cache anything passing trough this function that is not already cached.
+            cache_size: Maximum number of elements allowed in cache.
         """
         self.name = name
+        self.auto_cache = auto_cache
+        self.cache_size = cache_size
         self._parallel = None
         self._cached_data = dict()
         if data_to_cache is not None:
             self.add_to_cache(data=data_to_cache)
 
     @property
-    def parallel(self, prefer="threads"):
+    def parallel(self):
         if self._parallel is None:
-            self._parallel = Parallel(n_jobs=cpu_count(), prefer=prefer)
+            self._parallel = Parallel(n_jobs=cpu_count(), prefer="threads")
         return self._parallel
 
-    def _eval_data(self, data_key_or_value: InputTypes, **kwargs: Any) -> PointCloud:
+    def _eval_data(self,
+                   data_key_or_value: InputTypes,
+                   **kwargs: Any) -> PointCloud:
         """Returns cached data if possible. Processes input to return point cloud otherwise.
 
         Args:
@@ -114,16 +134,15 @@ class RegistrationInterface(ABC):
         Returns:
             The cached or loaded/processed point cloud data.
         """
-        try:
-            if data_key_or_value in self._cached_data:
-                logger.debug(f"Using cached data {data_key_or_value}.")
-                return self._cached_data[data_key_or_value]
-        except TypeError:
-            _hash = hashlib.md5(data_key_or_value)
-            if _hash in self._cached_data:
-                return self._cached_data[_hash]
-        logger.debug(f"Couldn't find data {data_key_or_value} in cache. Re-evaluating.")
-        return eval_data(data=data_key_or_value, **kwargs)
+        if isinstance(data_key_or_value, PointCloud):
+            return data_key_or_value
+        elif data_key_or_value in self._cached_data:
+            return self.get_cache_value(data_key_or_value)
+        elif self.auto_cache and len(self._cached_data) < self.cache_size:
+            self.add_to_cache(data={data_key_or_value: data_key_or_value}, **kwargs)
+            return self.get_cache_value(data_key_or_value)
+        else:
+            return eval_data(data=data_key_or_value, **kwargs)
 
     def _eval_data_parallel(self, data_keys_or_values: List[InputTypes], **kwargs: Any) -> List[PointCloud]:
         """Runs _eval_data in parallel threads.
@@ -152,7 +171,7 @@ class RegistrationInterface(ABC):
 
     def add_to_cache(self,
                      data: Dict[Any, InputTypes],
-                     replace: bool = False,
+                     replace: bool = True,
                      **kwargs: Any) -> None:
         """Adds `data.values()` to cache, replacing data with existing dict keys if `replace` is set to `True`.
 
@@ -160,67 +179,66 @@ class RegistrationInterface(ABC):
             data: The data to be cached.
             replace: Overwrite existing data in cache.
         """
-        if len(data) > 1:
-            parallel = Parallel(n_jobs=min(cpu_count(), len(data)), prefer="threads")
-            values = parallel(delayed(eval_data)(data=value,
-                                                 number_of_points=kwargs.get("number_of_points"),
-                                                 camera_intrinsic=kwargs.get("camera_intrinsic")) for value in
-                              data.values())
-            _data = dict(zip(list(data.keys()), values))
-        else:
-            _data = data
-        for key, value in _data.items():
-            try:
-                if key not in self._cached_data or replace:
-                    logger.debug(f"Adding data with key {key} to cache.")
-                    self._cached_data[key] = eval_data(data=value,
-                                                       number_of_points=kwargs.get("number_of_points"),
-                                                       camera_intrinsic=kwargs.get("camera_intrinsic"))
-            except TypeError:
-                logger.warning(f"Couldn't add data with unhashable key {key}.")
+        for key, value in data.items():
+            _value = eval_data(data=value, **kwargs)
+            if not (self.is_in_cache(key) or self.is_in_cache(_value)):
+                if len(self._cached_data) >= self.cache_size:
+                    first_key = list(data.keys())[0]
+                    logger.warning(f"Cache is full. Removing data with key {first_key} and value {data[first_key]}.")
+                    self._cached_data.pop(first_key)
+                self._cached_data[key] = _value
+            elif replace:
+                self.replace_in_cache(data={key: _value})
 
-    def replace_in_cache(self,
-                         data: Dict[Any, InputTypes],
-                         **kwargs: Any) -> None:
-        """Replaces `data.values()` for existing keys.
+    def replace_in_cache(self, data: Dict[Any, InputTypes], **kwargs: Any) -> None:
+        """Replaces `data.values()` for existing keys or `data.keys()` for existing values.
 
         Args:
             data: The data to be replaced.
         """
         for key, value in data.items():
-            try:
-                if key in self._cached_data:
-                    logger.debug(f"Replacing data with key {key} in cache.")
-                    self._cached_data[key] = eval_data(data=value,
-                                                       number_of_points=kwargs.get("number_of_points"),
-                                                       camera_intrinsic=kwargs.get("camera_intrinsic"))
-            except TypeError:
-                logger.warning(f"Couldn't replace data with unhashable key {key}.")
+            _value = eval_data(data=value, **kwargs)
+            if self.is_in_cache(key):
+                logger.debug(f"Replacing data with key {key} in cache.")
+                self._cached_data[key] = _value
+            elif self.is_in_cache(_value):
+                current_key = self.get_cache_key(_value)
+                logger.debug(f"Replacing key {current_key} for data with value {value} with key {key}.")
+                self._cached_data[key] = _value
+                self._cached_data.pop(current_key)
 
-    def get_from_cache(self, data_key: InputTypes) -> PointCloud:
+    def get_cache_value(self, data_key: Any) -> PointCloud:
         """Returns value for `data_key` from cache.
 
         Args:
-            data_key: Key storing `data.value` in cache.
+            data_key: Key storing value in cache.
 
         Returns:
-            The cached point cloud data.
+            The cached point cloud.
         """
         return self._cached_data[data_key]
 
-    def is_in_cache(self, data_key: InputTypes) -> bool:
+    def get_cache_key(self, cached_value: PointCloud) -> Any:
+        """Returns key for `cached_value` from cache.
+
+        Args:
+            cached_value: Point cloud stored in cache.
+
+        Returns:
+            Key to stored point cloud in cache.
+        """
+        return list(self._cached_data.keys())[list(self._cached_data.values()).index(cached_value)]
+
+    def is_in_cache(self, data_key_or_value: InputTypes) -> bool:
         """Checks if key is in cached data.
 
         Args:
-            data_key: The key to be checked.
+            data_key_or_value: The key or value to be checked.
 
         Returns:
-            `True` if key is in cached data, `False` otherwise.
+            `True` if key or value is in cached data, `False` otherwise.
         """
-        try:
-            return data_key in self._cached_data
-        except TypeError:
-            return False
+        return data_key_or_value in self._cached_data or data_key_or_value in self._cached_data.values()
 
     def draw_registration_result(self,
                                  source: InputTypes,
@@ -296,7 +314,7 @@ class RegistrationInterface(ABC):
                     metric: MetricTypes = MetricTypes.BOTH,
                     multi_scale: bool = False,
                     **kwargs: Any) -> MyRegistrationResult:
-        """Runs the registration algorithm of the derived class.
+        """Runs the registration algorithm of the derived class N times.
 
         Args:
             source: The source data.
@@ -470,7 +488,7 @@ class RegistrationInterface(ABC):
                  multi_thread_preload: bool = True,
                  progress: bool = True,
                  **kwargs: Any) -> List[MyRegistrationResult]:
-        """Convenience function to register multiple sources and targets. Takes accepts all arguments accepted by `run`.
+        """Convenience function to register multiple sources and targets. Wraps `run`, `run_n_times`, `run_multi_scale`.
 
         Args:
             source_list: A list of sources.

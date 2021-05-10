@@ -1,6 +1,7 @@
 """Integration tests for Easy Open3D."""
 import numpy as np
 import pytest
+import copy
 
 from .context import registration, utils
 
@@ -119,6 +120,50 @@ class TestIterativeClosestPoint:
 
     def test_iterative_closest_point_constructor(self):
         registration.IterativeClosestPoint()
+
+    def test_iterative_closest_point_eval_data(self, source_path, source_from_mesh):
+        icp = registration.IterativeClosestPoint(data_to_cache={"suzanne_str": source_path,
+                                                                "suzanne_pcd": source_from_mesh},
+                                                 cache_size=10)
+        assert icp.is_in_cache(data_key_or_value="suzanne_str")
+        assert icp.is_in_cache(data_key_or_value="suzanne_pcd")
+        assert isinstance(icp.get_cache_value(data_key="suzanne_str"), registration.PointCloud)
+        assert isinstance(icp.get_cache_value(data_key="suzanne_pcd"), registration.PointCloud)
+
+        assert icp._eval_data(data_key_or_value="suzanne_str") is icp.get_cache_value(data_key="suzanne_str")
+        assert icp._eval_data(data_key_or_value="suzanne_pcd") is icp.get_cache_value(data_key="suzanne_pcd")
+        assert icp.get_cache_value(data_key="suzanne_pcd") is source_from_mesh
+        assert len(icp._cached_data) == 2
+
+        icp._eval_data(data_key_or_value=source_from_mesh)
+        assert icp.is_in_cache(data_key_or_value=source_from_mesh)
+        assert isinstance(icp.get_cache_value(data_key=icp.get_cache_key(source_from_mesh)), registration.PointCloud)
+        assert len(icp._cached_data) == 2
+
+        icp._eval_data(data_key_or_value=source_path)
+        assert icp.is_in_cache(source_path)
+        assert isinstance(icp.get_cache_value(data_key=source_path), registration.PointCloud)
+        assert len(icp._cached_data) == 3
+
+        for _ in range(10):
+            icp._eval_data(data_key_or_value=source_path)
+            icp._eval_data(data_key_or_value=source_from_mesh)
+        assert len(icp._cached_data) == 3
+
+        icp._eval_data(data_key_or_value=copy.deepcopy(source_from_mesh))
+        assert len(icp._cached_data) == 3
+
+        for i in range(10):
+            icp.add_to_cache(data={i: source_from_mesh})
+        assert len(icp._cached_data) == 3
+
+        for i in range(10):
+            icp.add_to_cache(data={i: source_from_mesh}, replace=False)
+        assert len(icp._cached_data) == 3
+
+        for i in range(8):
+            icp.add_to_cache(data={i: copy.deepcopy(source_from_mesh)})
+        assert len(icp._cached_data) == 10
 
     def test_iterative_closest_point_basic(self, global_data):
         icp = registration.IterativeClosestPoint()
