@@ -98,35 +98,31 @@ target_path = "tests/test_data/suzanne_on_chair.ply"
 target = utils.eval_data(data=target_path, number_of_points=100000)
 
 # Prepare data
-source = utils.process_point_cloud(point_cloud=source,
-                                   downsample=utils.DownsampleTypes.VOXEL,
-                                   downsample_factor=0.01)
+source_down, source_feature = utils.process_point_cloud(point_cloud=source,
+                                                        downsample=utils.DownsampleTypes.VOXEL,
+                                                        downsample_factor=0.01,
+                                                        compute_feature=True,
+                                                        search_param_knn=100,
+                                                        search_param_radius=0.05)
 
-_, source_feature = utils.process_point_cloud(point_cloud=source,
-                                              compute_feature=True,
-                                              search_param_knn=100,
-                                              search_param_radius=0.05)
-
-target = utils.process_point_cloud(point_cloud=target,
-                                   downsample=utils.DownsampleTypes.VOXEL,
-                                   downsample_factor=0.01)
-
-_, target_feature = utils.process_point_cloud(point_cloud=target,
-                                              compute_feature=True,
-                                              search_param_knn=100,
-                                              search_param_radius=0.05)
+target_down, target_feature = utils.process_point_cloud(point_cloud=target,
+                                                        downsample=utils.DownsampleTypes.VOXEL,
+                                                        downsample_factor=0.01,
+                                                        compute_feature=True,
+                                                        search_param_knn=100,
+                                                        search_param_radius=0.05)
 
 # Run initializer
 ransac = RANSAC()
-ransac_result = ransac.run(source=source,
-                           target=target,
+ransac_result = ransac.run(source=source_down,
+                           target=target_down,
                            source_feature=source_feature,
                            target_feature=target_feature)
 
 # Run refiner on initializer result and visualize result
 icp = IterativeClosestPoint()
-icp_result = icp.run(source=source,
-                     target=target,
+icp_result = icp.run(source=source_down,
+                     target=target_down,
                      init=ransac_result.transformation,
                      draw=True,
                      overwrite_colors=True)
