@@ -27,3 +27,8 @@ class TestRunRegistration:
         config = configparser.ConfigParser(inline_comment_prefixes='#')
         config.read(registration_ini_path)
         run_registration.eval_config(config)
+
+    def test_run(self, registration_ini_path):
+        config = configparser.ConfigParser(inline_comment_prefixes='#')
+        config.read(registration_ini_path)
+        run_registration.run(config)

@@ -7,7 +7,7 @@ Functions:
     run: Runs the registration algorithms.
 """
 from easy_o3d import utils, registration, set_logger_level
-import sys
+
 import os
 import numpy as np
 import argparse
@@ -16,7 +16,7 @@ import logging
 import time
 import glob
 import tabulate
-from typing import Union, Dict, Any
+from typing import Dict, Any
 
 logger = logging.getLogger(__name__)
 
@@ -106,13 +106,17 @@ def eval_config(config: configparser.ConfigParser) -> Dict[str, Dict[str, Any]]:
             except (NameError, SyntaxError):
                 if values.lower() == "none":
                     values = None
+                elif values.lower() == "true":
+                    values = True
+                elif values.lower() == "false":
+                    values = False
                 elif section.lower() in ["data", "source_params", "target_params"]:
                     if option.lower() in ["source_files", "target_files"]:
                         _values = [values] if os.path.exists(values) else sorted(glob.glob(values))
                         if len(_values) == 0:
                             raise FileNotFoundError(f"No files found at {values}.")
                         values = _values
-                    elif option.lower() in ["ground_truth", "init_poses", "camera_intrinsic", "camera_extrinsic"]:
+                    elif option.lower() in ["ground_truth", "init_poses", "camera_extrinsic"]:
                         if os.path.exists(values):
                             if "scene_gt.json" in values.lower():
                                 poses = utils.get_ground_truth_pose_from_blenderproc_bopwriter(values)
@@ -194,21 +198,20 @@ def print_config_dict(config_dict: Dict[str, Any], pretty: bool = True) -> None:
     print(tabulate.tabulate(config_list))
 
 
-def run(config: Union[configparser.ConfigParser, None] = None) -> Union[None, Dict[str, Any]]:
-    # Evaluate command line arguments
-    start = time.time()
-    parser = argparse.ArgumentParser(description="Performs point cloud registration.")
-    parser.add_argument("-c", "--config",
-                        default=os.path.join(os.path.dirname(os.path.abspath(__file__)), "registration.ini"), type=str,
-                        help="Path to registration config.")
-    parser.add_argument("-v", "--verbose", action="store_true", help="Get verbose output during execution.")
-    parser.add_argument("-d", "--draw", action="store_true", help="Visualize registration results.")
-    args = parser.parse_args()
+def run(config: configparser.ConfigParser,
+        draw: bool = False,
+        verbose: bool = False) -> Dict[str, Any]:
+    """Runs registration algorithms parameterized by 'config'.
 
-    # Read config from argument or file
-    if config is None:
-        config = configparser.ConfigParser(inline_comment_prefixes='#')
-        config.read(args.config)
+    Args:
+        config: A config file specifying all necessary parameters for running the registration.
+        draw: Draw registration results.
+        verbose: Print verbose output during execution.
+
+    Returns:
+        A dict with registration results and errors.
+    """
+    start = time.time()
 
     # Evaluate config
     config_dict = eval_config(config)
@@ -224,7 +227,7 @@ def run(config: Union[configparser.ConfigParser, None] = None) -> Union[None, Di
     options = config_dict["options"]
 
     # Enable verbose output
-    if args.verbose or options["verbose"]:
+    if verbose or options["verbose"]:
         logger.setLevel(logging.DEBUG)
         set_logger_level(logging.DEBUG)
         print_config_dict(config_dict)
@@ -320,12 +323,12 @@ def run(config: Union[configparser.ConfigParser, None] = None) -> Union[None, Di
                                        source_scales=initializer_params["scales"],
                                        iterations=initializer_params["iterations"],
                                        radius_multiplier=initializer_params["radius_multiplier"],
-                                       draw=initializer_params["draw"] or (args.draw and algorithms["refiner"] is None),
+                                       draw=initializer_params["draw"] or (draw and algorithms["refiner"] is None),
                                        overwrite_colors=initializer_params["overwrite_colors"],
                                        search_param=feature_processing["search_param"],
                                        search_param_knn=feature_processing["search_param_knn"],
                                        search_param_radius=feature_processing["search_param_radius"],
-                                       progress=options["progress"] and not (args.verbose or options["verbose"]))
+                                       progress=options["progress"] and not (verbose or options["verbose"]))
         init_list = [result.transformation for result in results]
     if algorithms["refiner"] is not None:
         logger.debug(f"Running refiner {refiner.name}.")
@@ -340,9 +343,9 @@ def run(config: Union[configparser.ConfigParser, None] = None) -> Union[None, Di
                                    radius_multiplier=refiner_params["radius_multiplier"],
                                    crop_target_around_source=refiner_params["crop_target_around_source"],
                                    crop_scale=refiner_params["crop_scale"],
-                                   draw=refiner_params["draw"] or args.draw,
+                                   draw=refiner_params["draw"] or draw,
                                    overwrite_colors=refiner_params["overwrite_colors"],
-                                   progress=options["progress"] and not (args.verbose or options["verbose"]))
+                                   progress=options["progress"] and not (verbose or options["verbose"]))
     logger.debug(f"Execution took {time.time() - start} seconds.")
 
     # Load ground truth data
@@ -386,7 +389,7 @@ def run(config: Union[configparser.ConfigParser, None] = None) -> Union[None, Di
     errors_trans = [error[1] for error in errors]
 
     # Print evaluation results
-    if options["print_results"] or options["verbose"] or args.verbose:
+    if options["print_results"] or options["verbose"] or verbose:
         table = tabulate.tabulate([(name,
                                     result.fitness,
                                     result.inlier_rmse,
@@ -407,21 +410,38 @@ def run(config: Union[configparser.ConfigParser, None] = None) -> Union[None, Di
         print(table)
 
     # Return results
-    if not hasattr(sys, 'ps1'):  # Hack to prevent printing of return values when run as script
-        _return = options["return"].lower()
-        return_data = dict()
-        if "names" in _return:
-            return_data["names"] = names
-        if "results" in _return:
-            return_data["results"] = results
-        if "transformations" in _return:
-            return_data["transformations"] = [result.transformation for result in results]
-        if "errors_rot" in _return or "errors" in _return:
-            return_data["errors_rot"] = errors_rot
-        if "errors_trans" in _return or "errors" in _return:
-            return_data["errors_trans"] = errors_trans
-            return return_data
+    _return = options["return"].lower()
+    return_data = dict()
+    if "names" in _return:
+        return_data["names"] = names
+    if "results" in _return:
+        return_data["results"] = results
+    if "transformations" in _return:
+        return_data["transformations"] = [result.transformation for result in results]
+    if "errors_rot" in _return or "errors" in _return:
+        return_data["errors_rot"] = errors_rot
+    if "errors_trans" in _return or "errors" in _return:
+        return_data["errors_trans"] = errors_trans
+    return return_data
+
+
+def main():
+    # Evaluate command line arguments
+    parser = argparse.ArgumentParser(description="Performs point cloud registration.")
+    parser.add_argument("-c", "--config",
+                        default=os.path.join(os.path.dirname(os.path.abspath(__file__)), "registration.ini"), type=str,
+                        help="Path to registration config.")
+    parser.add_argument("-v", "--verbose", action="store_true", help="Get verbose output during execution.")
+    parser.add_argument("-d", "--draw", action="store_true", help="Visualize registration results.")
+    args = parser.parse_args()
+
+    # Read run registration config from argument
+    config = configparser.ConfigParser(inline_comment_prefixes='#')
+    config.read(args.config)
+
+    # Run registration
+    run(config, draw=args.draw, verbose=args.verbose)
 
 
 if __name__ == "__main__":
-    run()
+    main()

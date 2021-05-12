@@ -14,5 +14,5 @@ setup(name="easy-o3d",
                       "plot": ["plotly~=4.14.3"]},
       include_package_data=True,
       license='GPLv3',
-      entry_points={"console_scripts": ["run = scripts.run_registration:run",
+      entry_points={"console_scripts": ["run = scripts.run_registration:main",
                                         "hyperopt = scripts.hyperopt:main"]})

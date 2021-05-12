@@ -189,6 +189,9 @@ def main():
     parser.add_argument("-o", "--output", default=os.path.join(cd, "output"), type=str, help="/path/to/output/dir")
     args = parser.parse_args()
 
+    # Make output directory
+    os.makedirs(args.output, exist_ok=True)
+
     # Read hyperparameter optimization config (hyper config) from argument
     hyper_config = configparser.ConfigParser(inline_comment_prefixes='#')
     hyper_config.read(args.config)
@@ -198,7 +201,7 @@ def main():
     optimizer = optimization.get("optimizer").lower()
     options = hyper_config["options"]
 
-    # Read config from argument or file
+    # Read run registration config from file
     run_config = configparser.ConfigParser(inline_comment_prefixes='#')
     run_config.read(os.path.join(cd, "registration.ini"))
 
@@ -326,7 +329,7 @@ def main():
                                       random_state=eval(optimization.get("random_state")),
                                       verbose=verbose,
                                       callback=[progress_callback, checkpoint_callback])
-    elif all(c in optimizer for c in ['r', 'f']):
+    elif all(c in optimizer for c in list("rf")):
         result = skopt.forest_minimize(func=objective,
                                        dimensions=space,
                                        base_estimator=optimization.get("base_estimator").upper(),
@@ -343,7 +346,7 @@ def main():
                                        xi=optimization.getfloat("xi"),
                                        kappa=optimization.getfloat("kappa"),
                                        n_jobs=optimization.getint("n_jobs"))
-    elif all(c in optimizer for c in ['g', 'p']):
+    elif all(c in optimizer for c in list("gp")):
         noise = optimization.get("noise").lower()
         noise = noise if "gauss" in noise else optimization.getfloat("noise")
         result = skopt.gp_minimize(func=objective,
@@ -364,7 +367,7 @@ def main():
                                    kappa=optimization.getfloat("kappa"),
                                    noise=noise,
                                    n_jobs=optimization.getint("n_jobs"))
-    elif all(c in optimizer for c in ['g', 'b', 'r', 't']):
+    elif all(c in optimizer for c in list("gbrt")):
         result = skopt.gbrt_minimize(func=objective,
                                      dimensions=space,
                                      n_calls=optimization.getint("n_calls"),
@@ -449,7 +452,7 @@ def main():
             except (NameError, SyntaxError):
                 if filename.lower() == "none":
                     filename = None
-            best_config = configs[np.argmin(result.func_vals)]
+            best_config = configs[int(np.argmin(result.func_vals))]
             best_config["options"]["progress"] = str(True)
             best_config["options"]["print_results"] = str(True)
             if filename is None:
