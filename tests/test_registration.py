@@ -324,3 +324,56 @@ class TestPipeline:
                          init=result.transformation)
 
         assert np.linalg.norm(result.transformation - ground_truth_world) < 0.05
+
+
+def test_example():
+    # Import package functionality
+    from easy_o3d import utils
+    from easy_o3d.registration import RANSAC, IterativeClosestPoint
+
+    # Load source and target data
+    source_path = "tests/test_data/suzanne.ply"
+    source = utils.eval_data(data=source_path, number_of_points=10000)
+
+    target_path = "tests/test_data/suzanne_on_chair.ply"
+    target = utils.eval_data(data=target_path, number_of_points=100000)
+
+    # Prepare data
+    source = utils.process_point_cloud(point_cloud=source,
+                                       downsample=utils.DownsampleTypes.VOXEL,
+                                       downsample_factor=0.01)
+
+    _, source_feature = utils.process_point_cloud(point_cloud=source,
+                                                  compute_feature=True,
+                                                  search_param_knn=100,
+                                                  search_param_radius=0.05)
+
+    target = utils.process_point_cloud(point_cloud=target,
+                                       downsample=utils.DownsampleTypes.VOXEL,
+                                       downsample_factor=0.01)
+
+    _, target_feature = utils.process_point_cloud(point_cloud=target,
+                                                  compute_feature=True,
+                                                  search_param_knn=100,
+                                                  search_param_radius=0.05)
+
+    # Run initializer
+    ransac = RANSAC()
+    ransac_result = ransac.run(source=source,
+                               target=target,
+                               source_feature=source_feature,
+                               target_feature=target_feature)
+
+    # Run refiner on initializer result and visualize result
+    icp = IterativeClosestPoint()
+    icp_result = icp.run(source=source,
+                         target=target,
+                         init=ransac_result.transformation,
+                         draw=True,
+                         overwrite_colors=True)
+
+    # Load ground truth pose data and evaluate result
+    gt_path = "tests/test_data/ground_truth_pose.json"
+    gt_transformation = utils.get_ground_truth_pose_from_file(path_to_ground_truth_json=gt_path)
+    error = utils.get_transformation_error(transformation_estimate=icp_result.transformation,
+                                           transformation_ground_truth=gt_transformation)
