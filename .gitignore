@@ -133,7 +133,10 @@ dmypy.json
 *.obj
 *.mtl
 tests/test_data/Armchair_01_Textures/
-scripts/output
+scripts/output/
+scripts/*.ini
+!scripts/hyperopt.ini
+!scripts/registration.ini
 
 # IDEA
 .idea/
