@@ -12,7 +12,8 @@ in to find its pose in this scene. The pose of an object consists of its rotatio
 frame, typically the robots head frame, camera frame or world frame.
 
 ### A simple (yet slightly contrived) example
-Say we want to find the pose of Suzanne (the blue ape head on the chair who is the Blender mascot) in this scene:
+Say we want to find the pose of Suzanne (the blue ape head on the chair and the
+[Blender](https://www.blender.org/) mascot) in this scene:
 
 ![](./tests/test_data/bop_data/obj_of_interest/train_pbr/000000/rgb/000020.png)
 
@@ -21,7 +22,7 @@ We are also given a 3D model of Suzanne (the `source`) and a depth image of the 
 {% include test_data.html %}
 
 The goal is to rotate and move the `source` around until it matches the position and rotation of the corresponding
-points the `target`. A successful registration looks like this:
+points in the `target`. A successful registration looks like this:
 
 {% include registration_result.html %}
 
@@ -92,35 +93,31 @@ target_path = "./tests/test_data/suzanne_on_chair.ply"
 target = utils.eval_data(data=target_path, number_of_points=100000)
 
 # Prepare data
-source = utils.process_point_cloud(point_cloud=source,
-                                   downsample=utils.DownsampleTypes.VOXEL,
-                                   downsample_factor=0.01)
+source_down, source_feature = utils.process_point_cloud(point_cloud=source,
+                                                        downsample=utils.DownsampleTypes.VOXEL,
+                                                        downsample_factor=0.01,
+                                                        compute_feature=True,
+                                                        search_param_knn=100,
+                                                        search_param_radius=0.05)
 
-_, source_feature = utils.process_point_cloud(point_cloud=source,
-                                              compute_feature=True,
-                                              search_param_knn=100,
-                                              search_param_radius=0.05)
-
-target = utils.process_point_cloud(point_cloud=target,
-                                   downsample=utils.DownsampleTypes.VOXEL,
-                                   downsample_factor=0.01)
-
-_, target_feature = utils.process_point_cloud(point_cloud=target,
-                                              compute_feature=True,
-                                              search_param_knn=100,
-                                              search_param_radius=0.05)
+target_down, target_feature = utils.process_point_cloud(point_cloud=target,
+                                                        downsample=utils.DownsampleTypes.VOXEL,
+                                                        downsample_factor=0.01,
+                                                        compute_feature=True,
+                                                        search_param_knn=100,
+                                                        search_param_radius=0.05)
 
 # Run initializer
 ransac = RANSAC()
-ransac_result = ransac.run(source=source,
-                           target=target,
+ransac_result = ransac.run(source=source_down,
+                           target=target_down,
                            source_feature=source_feature,
                            target_feature=target_feature)
 
 # Run refiner on initializer result and visualize result
 icp = IterativeClosestPoint()
-icp_result = icp.run(source=source,
-                     target=target,
+icp_result = icp.run(source=source_down,
+                     target=target_down,
                      init=ransac_result.transformation,
                      draw=True,
                      overwrite_colors=True)
