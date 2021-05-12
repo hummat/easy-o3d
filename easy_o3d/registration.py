@@ -223,8 +223,9 @@ class IterativeClosestPoint(RegistrationInterface):
             draw: Visualize the registration result.
 
         Returns:
-            The registration result containing relative fitness and RMSE as well as the the transformation between
-            `source` and `target`.
+            The registration result containing relative fitness (`fitness`) and RMSE (`relative_rmse`) as well as the
+            correspondence set between `source` and `target` (`correspondence_set`) and transformation
+            (`transformation`) between `source` and `target` and runtime (`runtime`).
         """
         start = time.time()
         _init = eval_transformation_data(init)
@@ -302,7 +303,6 @@ class FastGlobalRegistration(RegistrationInterface):
         run(source, target, source_feature, target_feature, ...): Runs the FGR algorithm between `source` and `target`
                                                                   point cloud without any initial pose information.
     """
-
     def __init__(self,
                  max_iteration: int = 64,
                  max_correspondence_distance: float = 0.005,  # 5mm
@@ -351,6 +351,11 @@ class FastGlobalRegistration(RegistrationInterface):
             source_feature: The FPFH feature of `source`. Computed based on default values if not provided.
             target_feature: The FPFH feature of `target`. Computed based on default values if not provided.
             draw: Visualize the registration result.
+
+        Returns:
+            The registration result containing relative fitness (`fitness`) and RMSE (`relative_rmse`) as well as the
+            correspondence set between `source` and `target` (`correspondence_set`) and transformation
+            (`transformation`) between `source` and `target` and runtime (`runtime`).
         """
         start = time.time()
         _target = self._eval_data(data_key_or_value=target, **kwargs)
@@ -464,9 +469,8 @@ class RANSAC(RegistrationInterface):
         run(source, target, source_feature, target_feature, ...): Runs the RANSAC algorithm between `source` and
                                                                   `target` point cloud and their corresponding FPFH
                                                                   features without any initial pose information.
-        _eval_checkers():
+        _eval_checkers(): Constructs point-pair correspondence checker list from given checker types list.
     """
-
     def __init__(self,
                  algorithm: Union[ransac_feature, ransac_correspondence] = ransac_feature,
                  max_iteration: int = 100000,
@@ -575,6 +579,11 @@ class RANSAC(RegistrationInterface):
             source_feature: The FPFH feature of `source`. Computed based on default values if not provided.
             target_feature: The FPFH feature of `target`. Computed based on default values if not provided.
             draw: Visualize the registration result.
+
+        Returns:
+            The registration result containing relative fitness (`fitness`) and RMSE (`relative_rmse`) as well as the
+            correspondence set between `source` and `target` (`correspondence_set`) and transformation
+            (`transformation`) between `source` and `target` and runtime (`runtime`).
         """
         start = time.time()
         _target = self._eval_data(data_key_or_value=target, **kwargs)

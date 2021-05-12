@@ -90,11 +90,11 @@ class RegistrationInterface(ABC):
         is_in_cache(data_key_or_value): Checks if key is in cached data.
         draw_registration_result(source, target, pose, ...): Visualizes the registration result of `source` being
                                                              aligned with `target` using `pose`.
-        run(source, target): Runs the registration algorithm of the derived class.
-        run_n_times(source, target, n_times): Runs the registration algorithm of the derived class N times.
-        run_multi_scale(source, target): Runs the instantiated registration method at multiple scales.
-        run_many(source_list, target_list): Convenience function to register multiple sources and targets.
-                                            Wraps `run`, `run_n_times`, `run_multi_scale`.
+        run(source, target, ...): Runs the registration algorithm of the derived class.
+        run_n_times(source, target, n_times, ...): Runs the registration algorithm of the derived class N times.
+        run_multi_scale(source, target, ...): Runs the instantiated registration method at multiple scales.
+        run_many(source_list, target_list, ...): Convenience function to register multiple sources and targets.
+                                                 Wraps `run`, `run_n_times`, `run_multi_scale`.
     """
 
     def __init__(self,
@@ -485,7 +485,6 @@ class RegistrationInterface(ABC):
                  one_vs_one: bool = False,
                  n_times: int = 1,
                  multi_scale: bool = False,
-                 multi_thread_preload: bool = True,
                  progress: bool = True,
                  **kwargs: Any) -> List[MyRegistrationResult]:
         """Convenience function to register multiple sources and targets. Wraps `run`, `run_n_times`, `run_multi_scale`.
@@ -497,7 +496,6 @@ class RegistrationInterface(ABC):
             one_vs_one: Register one source to one target. Otherwise, each source is registered to each target.
             n_times: How often to run before returning best result. Further documentation at `run_n_times`.
             multi_scale: Use multi-scale registration instead of single scale.
-            multi_thread_preload: If input type is string, pre-loads data from disk in parallel using multi-threading.
             progress: Print progress bar.
 
         Returns:
@@ -506,9 +504,6 @@ class RegistrationInterface(ABC):
             If `one_vs_one`, the order is source_0 <-> target_0, source_1 <-> target_1, ...
         """
         start = time.time()
-        if multi_thread_preload and any(isinstance(x, str) for x in source_list + target_list):
-            source_target_list = self._eval_data_parallel(source_list + target_list, **kwargs)
-            source_list, target_list = source_target_list[:len(source_list)], source_target_list[len(source_list):]
 
         is_list = True
         if init_list is None:
