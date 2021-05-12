@@ -1,4 +1,4 @@
-"""Integration tests for Easy Open3D."""
+"""Integration tests for the package."""
 import numpy as np
 import pytest
 import copy

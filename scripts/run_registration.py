@@ -1,7 +1,5 @@
 #!/usr/bin/env python3
 """Performs point cloud registration using registration algorithms from this package."""
-import sys
-
 from easy_o3d import utils, registration, set_logger_level
 import os
 import numpy as np

@@ -43,7 +43,6 @@ Functions:
     get_rotation_error: Computes the error between estimated and ground-truth rotation in degrees or radians.
     get_translation_error: Computes the mean-squared translational error between estimated and ground-truth translation.
 """
-
 import copy
 import json
 import logging

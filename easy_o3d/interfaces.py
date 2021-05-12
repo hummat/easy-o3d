@@ -6,7 +6,6 @@ Classes:
     MyRegistrationResult: Helper class mimicking Open3D's `RegistrationResult` but mutable and with added runtime.
     RegistrationInterface: Interface for all registration classes.
 """
-
 import copy
 import logging
 import sys
@@ -183,8 +182,9 @@ class RegistrationInterface(ABC):
             _value = eval_data(data=value, **kwargs)
             if not (self.is_in_cache(key) or self.is_in_cache(_value)):
                 if len(self._cached_data) >= self.cache_size:
-                    first_key = list(data.keys())[0]
-                    logger.warning(f"Cache is full. Removing data with key {first_key} and value {data[first_key]}.")
+                    first_key = list(self._cached_data.keys())[0]
+                    logger.warning(f"Cache is full. Removing data with key {first_key} and value"
+                                   f"{self._cached_data[first_key]}.")
                     self._cached_data.pop(first_key)
                 self._cached_data[key] = _value
             elif replace:

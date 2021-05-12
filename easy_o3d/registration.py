@@ -7,7 +7,6 @@ Classes:
     FastGlobalRegistration: The Fast Global Registration (FGR) algorithm.
     RANSAC: The RANSAC algorithm.
 """
-
 import copy
 import logging
 import time
