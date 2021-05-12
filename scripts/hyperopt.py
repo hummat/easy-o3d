@@ -4,6 +4,12 @@
 Performs hyperparameter optimization for the registration algorithms from this package using Scikit Optimize
 (requires `scikit-optimize` package). The optimization is performed on a list of source and target point clouds provided
 as file paths and evaluated on ground truth transformations.
+
+Functions:
+    get_skopt_space_from_config: Creates Scikit-Optimize search space from a ConfigParser object.
+    set_config_params_with_config_or_dict: Sets ConfigParser object sections, options and values based on another
+                                           ConfigParser object or a dict.
+    print_config: Pretty-print ConfigParser object content.
 """
 import configparser
 import os

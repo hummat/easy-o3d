@@ -1,5 +1,11 @@
 #!/usr/bin/env python3
-"""Performs point cloud registration using registration algorithms from this package."""
+"""Performs point cloud registration using registration algorithms from this package.
+
+Functions:
+    eval_config: Evaluates data types of a ConfigParser object.
+    print_config_dict: Pretty-prints a config dict created by 'eval_config'.
+    run: Runs the registration algorithms.
+"""
 from easy_o3d import utils, registration, set_logger_level
 import os
 import numpy as np

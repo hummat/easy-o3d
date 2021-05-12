@@ -11,7 +11,7 @@ Functions:
     hyperopt.get_skopt_space_from_config: Creates Scikit-Optimize search space from a ConfigParser object.
     hyperopt.set_config_params_with_config_or_dict: Sets ConfigParser object sections, options and values based on
                                                     another ConfigParser object or a dict.
-    print_config: Pretty-print ConfigParser object content.
+    hyperopt.print_config: Pretty-print ConfigParser object content.
     run_registration.eval_config: Evaluates data types of a ConfigParser object.
     run_registration.print_config_dict: Pretty-prints a config dict created by 'eval_config'.
     run_registration.run: Runs the registration algorithms.
