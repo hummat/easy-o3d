@@ -1,11 +1,10 @@
 #!/usr/bin/env python3
-"""Registration algorithms hyperparameter optimization.
+"""Registration algorithms hyperparameter optimization script.
 
 Performs hyperparameter optimization for the registration algorithms from this package using Scikit Optimize
 (requires `scikit-optimize` package). The optimization is performed on a list of source and target point clouds provided
 as file paths and evaluated on ground truth transformations.
 """
-
 import configparser
 import os
 import sys
