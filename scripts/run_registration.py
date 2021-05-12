@@ -7,6 +7,7 @@ Functions:
     run: Runs the registration algorithms.
 """
 from easy_o3d import utils, registration, set_logger_level
+import sys
 import os
 import numpy as np
 import argparse
@@ -193,7 +194,7 @@ def print_config_dict(config_dict: Dict[str, Any], pretty: bool = True) -> None:
     print(tabulate.tabulate(config_list))
 
 
-def run(config: Union[configparser.ConfigParser, None] = None) -> Dict[str, Any]:
+def run(config: Union[configparser.ConfigParser, None] = None) -> Union[None, Dict[str, Any]]:
     # Evaluate command line arguments
     start = time.time()
     parser = argparse.ArgumentParser(description="Performs point cloud registration.")
@@ -406,19 +407,20 @@ def run(config: Union[configparser.ConfigParser, None] = None) -> Dict[str, Any]
         print(table)
 
     # Return results
-    _return = options["return"].lower()
-    return_data = dict()
-    if "names" in _return:
-        return_data["names"] = names
-    if "results" in _return:
-        return_data["results"] = results
-    if "transformations" in _return:
-        return_data["transformations"] = [result.transformation for result in results]
-    if "errors_rot" in _return or "errors" in _return:
-        return_data["errors_rot"] = errors_rot
-    if "errors_trans" in _return or "errors" in _return:
-        return_data["errors_trans"] = errors_trans
-    return return_data
+    if not hasattr(sys, 'ps1'):  # Hack to prevent printing of return values when run as script
+        _return = options["return"].lower()
+        return_data = dict()
+        if "names" in _return:
+            return_data["names"] = names
+        if "results" in _return:
+            return_data["results"] = results
+        if "transformations" in _return:
+            return_data["transformations"] = [result.transformation for result in results]
+        if "errors_rot" in _return or "errors" in _return:
+            return_data["errors_rot"] = errors_rot
+        if "errors_trans" in _return or "errors" in _return:
+            return_data["errors_trans"] = errors_trans
+            return return_data
 
 
 if __name__ == "__main__":

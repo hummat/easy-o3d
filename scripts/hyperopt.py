@@ -213,7 +213,7 @@ def main():
     run_config["options"]["verbose"] = str(False)
     run_config["options"]["progress"] = str(False)
     run_config["options"]["print_results"] = str(False)
-    run_config["options"]["return"] = "results+errors"
+    run_config["options"]["return"] = "results+errors" if "error" in optimization.get("minimize").lower() else "results"
     run_config["options"]["use_degrees"] = str(False)
     configs = list()
 
@@ -260,7 +260,7 @@ def main():
         try:
             results = run(config=run_config)
 
-            if any("errors" in key for key in results.keys()):
+            if any("error" in key for key in results.keys()):
                 if optimization.get("minimize").lower() in ["errors", "errors_rot+errors_trans"]:
                     cost = sum(results["errors_rot"] + results["errors_trans"])
                 elif optimization.get("minimize").lower() == "errors_rot":
@@ -271,9 +271,9 @@ def main():
                     raise ValueError(f"Invalid config option '{optimization.get('minimize')}' for 'minimize'.")
             else:
                 if optimization.get("minimize").lower() in ["errors", "errors_rot+errors_trans"]:
-                    logger.warning(f"Optimization objective is '{optimization.get('minimize')}' which was not found in "
-                                   f"returned results. Did you provide ground truth data? Using inlier RMSE instead.")
-                    cost = sum([r.inlier_rmse for r in results["results"]])
+                    message = f"Optimization objective is '{optimization.get('minimize')}' which was not found in" \
+                              f"returned results. Did you provide ground truth data? Using inlier RMSE instead."
+                    raise ValueError(message)
                 elif optimization.get("minimize").lower() == "inlier_rmse-fitness":
                     cost = sum([r.inlier_rmse - r.fitness for r in results["results"]])
                 elif optimization.get("minimize").lower() in ["fitness", "-fitness"]:
@@ -282,8 +282,11 @@ def main():
                     cost = sum([r.inlier_rmse for r in results["results"]])
                 else:
                     raise ValueError(f"Invalid config option '{optimization.get('minimize')}' for 'minimize'.")
+                if optimization.getboolean("scale_objective"):
+                    num_correspondences = sum([len(r.correspondence_set) for r in results["results"]])
+                    cost = cost / num_correspondences if num_correspondences > 0 else 1e30
         except Exception as ex:
-            message = f"Caught exception during execution of 'run_registration.run': {ex}."
+            message = f"Caught exception during execution of 'run_registration.run': {ex}"
             logger.exception(message) if progress.disable else progress.write(message)
             cost = 1e30
 
@@ -460,7 +463,7 @@ def main():
                 config_hash = hashlib.md5(config_hash.encode('utf-8')).hexdigest()
                 output_path = os.path.join(args.output, f"{config_hash}.ini")
             else:
-                output_path = os.path.join(args.output, f"{filename}.ini")
+                output_path = os.path.join(args.output, f"{filename.split('.')[0]}.ini")
             with open(output_path, 'w') as configfile:
                 best_config.write(configfile)
         except Exception as e:
@@ -471,7 +474,7 @@ def main():
         if filename is None:
             output_path = os.path.join(args.output, f"{config_hash}.pkl")
         else:
-            output_path = os.path.join(args.output, f"{filename}.pkl")
+            output_path = os.path.join(args.output, f"{filename.split('.')[0]}.pkl")
         try:
             del result.specs['args']['callback']
             skopt.dump(res=result, filename=output_path, compress=True)

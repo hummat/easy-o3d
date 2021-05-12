@@ -222,7 +222,7 @@ class IterativeClosestPoint(RegistrationInterface):
             draw: Visualize the registration result.
 
         Returns:
-            The registration result containing relative fitness (`fitness`) and RMSE (`relative_rmse`) as well as the
+            The registration result containing relative fitness (`fitness`) and RMSE (`inlier_rmse`) as well as the
             correspondence set between `source` and `target` (`correspondence_set`) and transformation
             (`transformation`) between `source` and `target` and runtime (`runtime`).
         """
@@ -352,7 +352,7 @@ class FastGlobalRegistration(RegistrationInterface):
             draw: Visualize the registration result.
 
         Returns:
-            The registration result containing relative fitness (`fitness`) and RMSE (`relative_rmse`) as well as the
+            The registration result containing relative fitness (`fitness`) and RMSE (`inlier_rmse`) as well as the
             correspondence set between `source` and `target` (`correspondence_set`) and transformation
             (`transformation`) between `source` and `target` and runtime (`runtime`).
         """
@@ -580,7 +580,7 @@ class RANSAC(RegistrationInterface):
             draw: Visualize the registration result.
 
         Returns:
-            The registration result containing relative fitness (`fitness`) and RMSE (`relative_rmse`) as well as the
+            The registration result containing relative fitness (`fitness`) and RMSE (`inlier_rmse`) as well as the
             correspondence set between `source` and `target` (`correspondence_set`) and transformation
             (`transformation`) between `source` and `target` and runtime (`runtime`).
         """
