@@ -632,7 +632,7 @@ def convert_depth_image_to_point_cloud(image_or_path: ImageTypes,
 
 def convert_rgbd_image_to_point_cloud(rgbd_image_or_path: RGBDImageTypes,
                                       camera_intrinsic: CameraTypes,
-                                      camera_extrinsic: Union[np.ndarray, list] = np.eye(4),
+                                      camera_extrinsic: Union[np.ndarray, list, None] = np.eye(4),
                                       depth_scale: float = 1000.0,
                                       depth_trunc: float = 1000.0,
                                       **kwargs: Any) -> PointCloud:
@@ -655,7 +655,10 @@ def convert_rgbd_image_to_point_cloud(rgbd_image_or_path: RGBDImageTypes,
     assert isinstance(rgbd_image, RGBDImage), f"'rgbd_image must have type 'RGBDImage' but has type {type(rgbd_image)}."
 
     intrinsic = eval_camera_intrinsic_type(image_or_path=rgbd_image, camera_intrinsic=camera_intrinsic)
-    extrinsic = np.asarray(camera_extrinsic).reshape(4, 4)
+    if camera_extrinsic is None:
+        extrinsic = np.eye(4)
+    else:
+        extrinsic = np.asarray(camera_extrinsic).reshape(4, 4)
 
     return PointCloud().create_from_rgbd_image(image=rgbd_image,
                                                intrinsic=intrinsic,
