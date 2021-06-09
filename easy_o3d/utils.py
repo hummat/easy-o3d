@@ -595,7 +595,7 @@ def eval_camera_intrinsic_type(image_or_path: ImageTypes, camera_intrinsic: Came
 
 def convert_depth_image_to_point_cloud(image_or_path: ImageTypes,
                                        camera_intrinsic: CameraTypes,
-                                       camera_extrinsic: Union[np.ndarray, list] = np.eye(4),
+                                       camera_extrinsic: Union[np.ndarray, list, None] = np.eye(4),
                                        depth_scale: float = 1000.0,
                                        depth_trunc: float = 1000.0,
                                        **kwargs: Any) -> PointCloud:
@@ -616,7 +616,10 @@ def convert_depth_image_to_point_cloud(image_or_path: ImageTypes,
     assert len(np.asarray(image).shape) == 2, f"Depth image must have shape WxH but is {image.shape}."
 
     intrinsic = eval_camera_intrinsic_type(image_or_path=image, camera_intrinsic=camera_intrinsic)
-    extrinsic = np.asarray(camera_extrinsic).reshape(4, 4)
+    if camera_extrinsic is None:
+        extrinsic = np.eye(4)
+    else:
+        extrinsic = np.asarray(camera_extrinsic).reshape(4, 4)
 
     return PointCloud().create_from_depth_image(depth=image,
                                                 intrinsic=intrinsic,
