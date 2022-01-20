@@ -323,7 +323,7 @@ class FastGlobalRegistration(RegistrationInterface):
 
         self.max_correspondence_distance = max_correspondence_distance
         self.max_iteration = max_iteration
-        self.algorithm = o3d.pipelines.registration.registration_fast_based_on_feature_matching
+        self.algorithm = o3d.pipelines.registration.registration_fgr_based_on_feature_matching
 
         self.option = FastGlobalRegistrationOption(maximum_correspondence_distance=self.max_correspondence_distance,
                                                    iteration_number=self.max_iteration)
