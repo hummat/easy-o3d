@@ -373,3 +373,5 @@ def test_example():
     gt_transformation = utils.get_ground_truth_pose_from_file(path_to_ground_truth_json=gt_path)
     error = utils.get_transformation_error(transformation_estimate=icp_result.transformation,
                                            transformation_ground_truth=gt_transformation)
+    error_rot, error_trans = error
+    assert error_rot < 2 and error_trans < 0.003

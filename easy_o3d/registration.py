@@ -278,11 +278,12 @@ class IterativeClosestPoint(RegistrationInterface):
         if draw:
             self.draw_registration_result(source=_source, target=_target, pose=result.transformation, **kwargs)
 
-        return MyRegistrationResult(correspondence_set=result.correspondence_set,
-                                    fitness=result.fitness,
-                                    inlier_rmse=result.inlier_rmse,
-                                    transformation=result.transformation,
-                                    runtime=runtime)
+        self._registration_result = MyRegistrationResult(correspondence_set=result.correspondence_set,
+                                                         fitness=result.fitness,
+                                                         inlier_rmse=result.inlier_rmse,
+                                                         transformation=result.transformation,
+                                                         runtime=runtime)
+        return self.registration_result
 
 
 class FastGlobalRegistration(RegistrationInterface):
@@ -435,11 +436,12 @@ class FastGlobalRegistration(RegistrationInterface):
         if draw:
             self.draw_registration_result(source=_source, target=_target, pose=result.transformation, **kwargs)
 
-        return MyRegistrationResult(correspondence_set=result.correspondence_set,
-                                    fitness=result.fitness,
-                                    inlier_rmse=result.inlier_rmse,
-                                    transformation=result.transformation @ _init,
-                                    runtime=runtime)
+        self._registration_result = MyRegistrationResult(correspondence_set=result.correspondence_set,
+                                                         fitness=result.fitness,
+                                                         inlier_rmse=result.inlier_rmse,
+                                                         transformation=result.transformation @ _init,
+                                                         runtime=runtime)
+        return self.registration_result
 
 
 class RANSAC(RegistrationInterface):
@@ -691,8 +693,9 @@ class RANSAC(RegistrationInterface):
                                           pose=result.transformation,
                                           **kwargs)
 
-        return MyRegistrationResult(correspondence_set=result.correspondence_set,
-                                    fitness=result.fitness,
-                                    inlier_rmse=result.inlier_rmse,
-                                    transformation=result.transformation @ _init,
-                                    runtime=runtime)
+        self._registration_result = MyRegistrationResult(correspondence_set=result.correspondence_set,
+                                                         fitness=result.fitness,
+                                                         inlier_rmse=result.inlier_rmse,
+                                                         transformation=result.transformation @ _init,
+                                                         runtime=runtime)
+        return self.registration_result

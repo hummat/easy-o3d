@@ -21,7 +21,7 @@ import numpy as np
 import open3d as o3d
 
 from .utils import (InputTypes, DownsampleTypes, SearchParamTypes, eval_data, draw_geometries,
-                    process_point_cloud, TransformationTypes)
+                    process_point_cloud, TransformationTypes, eval_transformation_data)
 
 PointToPoint = o3d.pipelines.registration.TransformationEstimationPointToPoint
 PointToPlane = o3d.pipelines.registration.TransformationEstimationPointToPlane
@@ -30,6 +30,8 @@ RegistrationResult = o3d.pipelines.registration.RegistrationResult
 TriangleMesh = o3d.geometry.TriangleMesh
 PointCloud = o3d.geometry.PointCloud
 Feature = o3d.pipelines.registration.Feature
+evaluate_registration = o3d.pipelines.registration.evaluate_registration
+get_information_matrix_from_point_clouds = o3d.pipelines.registration.get_information_matrix_from_point_clouds
 
 logger = logging.getLogger(__name__)
 
@@ -47,6 +49,7 @@ class MetricTypes(Flag):
     FITNESS = auto()
     SUM = auto()
     BOTH = auto()
+    FISHER = auto()
 
 
 class MyRegistrationResult:
@@ -57,12 +60,14 @@ class MyRegistrationResult:
                  fitness: float,
                  inlier_rmse: float,
                  transformation: np.ndarray,
-                 runtime: float):
+                 runtime: float,
+                 fisher: Union[np.ndarray, None] = None):
         self.correspondence_set = correspondence_set
         self.fitness = fitness
         self.inlier_rmse = inlier_rmse
         self.transformation = transformation
         self.runtime = runtime
+        self.fisher = fisher
 
 
 class RegistrationInterface(ABC):
@@ -111,13 +116,22 @@ class RegistrationInterface(ABC):
         self.name = name
         self.auto_cache = auto_cache
         self.cache_size = cache_size
+        self.max_correspondence_distance = None
+        self._registration_result = None
         self._parallel = None
         self._cached_data = dict()
         if data_to_cache is not None:
             self.add_to_cache(data=data_to_cache)
 
     @property
-    def parallel(self):
+    def registration_result(self) -> MyRegistrationResult:
+        if self._registration_result is None:
+            raise AttributeError("The registration result can only be accessed after running the registration.")
+        else:
+            return self._registration_result
+
+    @property
+    def parallel(self) -> Parallel:
         if self._parallel is None:
             self._parallel = Parallel(n_jobs=cpu_count(), prefer="threads")
         return self._parallel
@@ -311,7 +325,7 @@ class RegistrationInterface(ABC):
                     init: TransformationTypes = np.eye(4),
                     n_times: int = 3,
                     threshold: float = 0.0,
-                    metric: MetricTypes = MetricTypes.BOTH,
+                    metric: MetricTypes = MetricTypes.FISHER,
                     multi_scale: bool = False,
                     **kwargs: Any) -> MyRegistrationResult:
         """Runs the registration algorithm of the derived class N times.
@@ -328,11 +342,40 @@ class RegistrationInterface(ABC):
         Returns:
             The best registration result from N runs.
         """
-        best_result = MyRegistrationResult(correspondence_set=np.array([]),
-                                           inlier_rmse=np.infty,
-                                           fitness=0.0,
-                                           transformation=np.eye(4),
-                                           runtime=0.0)
+        start = time.time()
+        _init = eval_transformation_data(init)
+        if np.array_equal(_init, np.asarray("center")):
+            _init = eval_transformation_data(target.get_center())
+        _source = self._eval_data(data_key_or_value=source, **kwargs)
+        _target = self._eval_data(data_key_or_value=target, **kwargs)
+
+        self.max_correspondence_distance = kwargs.get("max_correspondence_distance", self.max_correspondence_distance)
+        if self.max_correspondence_distance == -1.0:
+            self.max_correspondence_distance = self._compute_dist(point_cloud=_source)
+
+        result = evaluate_registration(_source,
+                                       _target,
+                                       self.max_correspondence_distance,
+                                       _init)
+
+        fisher = None
+        if metric == MetricTypes.FISHER:
+            fisher = get_information_matrix_from_point_clouds(_source,
+                                                              _target,
+                                                              self.max_correspondence_distance,
+                                                              _init)
+
+        runtime = time.time() - start
+        logger.debug(f"Initial pose result: runtime={runtime}, fitness={result.fitness}, "
+                     f"inlier_rmse={result.inlier_rmse}, "
+                     f"information={None if fisher is None else fisher.mean()}.")
+
+        best_result = MyRegistrationResult(correspondence_set=result.correspondence_set,
+                                           fitness=result.fitness,
+                                           inlier_rmse=result.inlier_rmse,
+                                           transformation=result.transformation,
+                                           runtime=runtime,
+                                           fisher=fisher)
 
         _func = self.run_multi_scale if multi_scale else self.run
 
@@ -348,7 +391,10 @@ class RegistrationInterface(ABC):
                 if _result.fitness - _result.inlier_rmse > _best_result.fitness - _result.inlier_rmse and len(_result.correspondence_set) > 0:
                     _best_result = _result
             elif metric == MetricTypes.BOTH:
-                if _result.fitness > _best_result.fitness and _result.inlier_rmse < best_result.inlier_rmse and len(_result.correspondence_set) > 0:
+                if _result.fitness > _best_result.fitness and _result.inlier_rmse < self.registration_result.inlier_rmse and len(_result.correspondence_set) > 0:
+                    _best_result = _result
+            elif metric == MetricTypes.FISHER:
+                if _result.fisher.mean() > _best_result.fisher.mean():
                     _best_result = _result
             else:
                 raise ValueError(f"{metric} is not a valid `MetricsType` type.")
@@ -356,25 +402,47 @@ class RegistrationInterface(ABC):
 
         if n_times != -1:
             for n in range(n_times):
-                result = _func(source=source, target=target, init=init, **kwargs)
-                best_result = _eval_result(result, best_result)
+                _func(source=_source, target=_target, init=_init, **kwargs)
+                if metric == MetricTypes.FISHER:
+                    dist = self.max_correspondence_distance
+                    pose = self.registration_result.transformation
+                    self.registration_result.fisher = get_information_matrix_from_point_clouds(_source,
+                                                                                               _target,
+                                                                                               dist,
+                                                                                               pose)
+                best_result = _eval_result(self.registration_result, best_result)
         else:
             if metric == MetricTypes.RMSE:
-                while best_result.inlier_rmse > threshold:
-                    result = _func(source=source, target=target, init=init, **kwargs)
-                    best_result = _eval_result(result, best_result)
+                while self.registration_result.inlier_rmse > threshold:
+                    _func(source=_source, target=_target, init=_init, **kwargs)
             elif metric == MetricTypes.FITNESS:
-                while best_result.fitness < threshold:
-                    result = _func(source=source, target=target, init=init, **kwargs)
-                    best_result = _eval_result(result, best_result)
+                while self.registration_result.fitness < threshold:
+                    _func(source=_source, target=_target, init=_init, **kwargs)
             elif metric == MetricTypes.SUM:
-                while best_result.fitness - best_result.inlier_rmse < threshold:
-                    result = _func(source=source, target=target, init=init, **kwargs)
-                    best_result = _eval_result(result, best_result)
+                while self.registration_result.fitness - self.registration_result.inlier_rmse < threshold:
+                    _func(source=_source, target=_target, init=_init, **kwargs)
             elif metric == MetricTypes.BOTH:
                 raise ValueError(f"Can't use threshold-based return with metric `BOTH`.")
+            elif metric == MetricTypes.FISHER:
+                while self.registration_result.fisher.mean() < threshold:
+                    _func(source=_source, target=_target, init=_init, **kwargs)
+                    dist = self.max_correspondence_distance
+                    pose = self.registration_result.transformation
+                    self.registration_result.fisher = get_information_matrix_from_point_clouds(_source,
+                                                                                               _target,
+                                                                                               dist,
+                                                                                               pose)
             else:
                 raise ValueError(f"{metric} is not a valid `MetricsType` type.")
+            best_result = self.registration_result
+
+        runtime = time.time() - start
+        logger.debug(f"{self.name} took {runtime} seconds.")
+        logger.debug(f"{self.name} result: fitness={best_result.fitness}, "
+                     f"inlier_rmse={best_result.inlier_rmse}, "
+                     f"information={None if fisher is None else best_result.fisher.mean()}.")
+
+        best_result.runtime = runtime
         return best_result
 
     def run_multi_scale(self,
@@ -412,11 +480,18 @@ class RegistrationInterface(ABC):
         assert len(source_scales) == len(iterations) == len(target_scales),\
             "Need to provide same number of 'source_scales', 'target_scales' and 'iterations'."
 
+        _init = eval_transformation_data(init)
+        if np.array_equal(_init, np.asarray("center")):
+            _init = eval_transformation_data(target.get_center())
         _source = self._eval_data(data_key_or_value=source, **kwargs)
         _target = self._eval_data(data_key_or_value=target, **kwargs)
 
-        current_result = None
-        current_transformation = init
+        self._registration_result = MyRegistrationResult(correspondence_set=np.array([]),
+                                                         fitness=0.0,
+                                                         inlier_rmse=np.infty,
+                                                         transformation=_init,
+                                                         runtime=time.time() - start)
+
         for i, (source_scale, target_scale, iteration) in enumerate(zip(source_scales, target_scales, iterations)):
             source_radius = radius_multiplier[0] * kwargs.get("search_param_radius", source_scale)
             target_radius = radius_multiplier[0] * kwargs.get("search_param_radius", target_scale)
@@ -442,12 +517,12 @@ class RegistrationInterface(ABC):
                                               search_param_radius=target_radius,
                                               search_param_knn=kwargs.get("search_param_knn", 30))
             if "ICP" in self.name:
-                current_result = self.run(source=source_down,
-                                          target=target_down,
-                                          max_correspondence_distance=source_radius,
-                                          init=current_transformation,
-                                          max_iteration=iteration,
-                                          **kwargs)
+                self.run(source=source_down,
+                         target=target_down,
+                         init=self.registration_result.transformation,
+                         max_correspondence_distance=source_radius,
+                         max_iteration=iteration,
+                         **kwargs)
             else:
                 source_radius = radius_multiplier[1] * kwargs.get("search_param_radius", source_scale)
                 target_radius = radius_multiplier[1] * kwargs.get("search_param_radius", target_scale)
@@ -466,17 +541,16 @@ class RegistrationInterface(ABC):
                                                         search_param_radius=target_radius,
                                                         search_param_knn=kwargs.get("search_param_knn", 100))
 
-                current_result = self.run(source=source_down,
-                                          target=target_down,
-                                          init=current_transformation,
-                                          max_correspondence_distance=source_radius,
-                                          source_feature=source_feature,
-                                          target_feature=target_feature,
-                                          max_iteration=iteration,
-                                          **kwargs)
-            current_transformation = current_result.transformation
-            current_result.runtime = time.time() - start
-        return current_result
+                self.run(source=source_down,
+                         target=target_down,
+                         init=self.registration_result.transformation,
+                         max_correspondence_distance=source_radius,
+                         source_feature=source_feature,
+                         target_feature=target_feature,
+                         max_iteration=iteration,
+                         **kwargs)
+            self.registration_result.runtime = time.time() - start
+        return self.registration_result
 
     def run_many(self,
                  source_list: List[InputTypes],

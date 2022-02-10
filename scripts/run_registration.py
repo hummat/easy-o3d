@@ -6,17 +6,18 @@ Functions:
     print_config_dict: Pretty-prints a config dict created by 'eval_config'.
     run: Runs the registration algorithms.
 """
-from easy_o3d import utils, registration, set_logger_level
-
 import os
-import numpy as np
 import argparse
 import configparser
 import logging
 import time
 import glob
-import tabulate
 from typing import Dict, Any
+
+import numpy as np
+import tabulate
+
+from easy_o3d import utils, registration, set_logger_level
 
 logger = logging.getLogger(__name__)
 
