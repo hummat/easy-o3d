@@ -495,7 +495,7 @@ class RegistrationInterface(ABC):
         for i, (source_scale, target_scale, iteration) in enumerate(zip(source_scales, target_scales, iterations)):
             source_radius = radius_multiplier[0] * kwargs.get("search_param_radius", source_scale)
             target_radius = radius_multiplier[0] * kwargs.get("search_param_radius", target_scale)
-            logger.debug(f"Iteration {i + 1}/{len(iterations)} with scales={source_scale, target_scale},"
+            logger.debug(f"Iteration {i + 1}/{len(iterations)} with scales={source_scale, target_scale}, "
                          f"iterations={iteration}, radii={source_radius, target_radius}")
 
             source_down = process_point_cloud(point_cloud=_source,
