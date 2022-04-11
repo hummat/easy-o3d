@@ -728,6 +728,7 @@ def eval_transformation_data(transformation_data: TransformationTypes) -> np.nda
         elif len(data) == 9:
             T = np.eye(4)
             T[:3, :3] = np.asarray(data).reshape(3, 3)
+            return T
         elif len(data) in [12, 16]:
             T = np.eye(4)
             T[:3, :3] = np.asarray(data[:9]).reshape(3, 3)
