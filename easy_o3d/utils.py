@@ -490,9 +490,19 @@ def get_camera_intrinsic_from_array(image_or_path: ImageTypes,
     Returns:
         The camera intrinsic object.
     """
-    intrinsic = np.asarray(camera_intrinsic)
-    assert intrinsic.size in [6, 9], f"Camera intrinsic must be 6 or 9 values but is {intrinsic.size}."
-    intrinsic = intrinsic.reshape(3, 3) if intrinsic.size == 9 else intrinsic.reshape(2, 3)
+    intrinsic = np.asarray(camera_intrinsic).flatten()
+    assert intrinsic.size in [4, 5, 9], f"Camera intrinsic must be 4, 5 or 9 values but is {intrinsic.size}."
+    if intrinsic.size == 9:
+        intrinsic = intrinsic.reshape(3, 3)
+    else:
+        _intrinsic = intrinsic
+        intrinsic = np.zeros(9).reshape(3, 3)
+        intrinsic[0, 0] = _intrinsic[0]
+        intrinsic[1, 1] = _intrinsic[1]
+        intrinsic[0, 2] = _intrinsic[2]
+        intrinsic[1, 2] = _intrinsic[3]
+        if _intrinsic.size == 5:
+            intrinsic[0, 1] = _intrinsic[4]
     image = eval_image_type(image_or_path=image_or_path)
     if isinstance(image, RGBDImage):
         image = image.depth
@@ -613,7 +623,7 @@ def convert_depth_image_to_point_cloud(image_or_path: ImageTypes,
     """
     image = eval_image_type(image_or_path=image_or_path, **kwargs)
     assert isinstance(image, Image), f"'image' must have type 'Image' but has type {type(image)}."
-    assert len(np.asarray(image).shape) == 2, f"Depth image must have shape WxH but is {image.shape}."
+    assert len(np.asarray(image).shape) == 2, f"Depth image must have shape WxH but is {np.asarray(image).shape}."
 
     intrinsic = eval_camera_intrinsic_type(image_or_path=image, camera_intrinsic=camera_intrinsic)
     if camera_extrinsic is None:
