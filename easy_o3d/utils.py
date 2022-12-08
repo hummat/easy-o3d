@@ -467,14 +467,12 @@ def sample_point_cloud_from_triangle_mesh(mesh_or_filename: Union[TriangleMesh, 
 
     if sample_type == SampleTypes.UNIFORMLY:
         return mesh.sample_points_uniformly(number_of_points=number_of_points,
-                                            use_triangle_normal=kwargs.get("use_triangle_normal", False),
-                                            seed=kwargs.get("seed", -1))
+                                            use_triangle_normal=kwargs.get("use_triangle_normal", False))
     elif sample_type == SampleTypes.POISSON_DISK:
         return mesh.sample_points_poisson_disk(number_of_points=number_of_points,
                                                init_factor=kwargs.get("init_factor", 5),
                                                pcl=kwargs.get("pcl"),
-                                               use_triangle_normal=kwargs.get("use_triangle_normal", False),
-                                               seed=kwargs.get("seed", -1))
+                                               use_triangle_normal=kwargs.get("use_triangle_normal", False))
     else:
         raise ValueError(f"Sample type {sample_type} not supported.")
 
