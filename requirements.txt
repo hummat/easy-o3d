@@ -1,6 +1,2 @@
-numpy>=1.22.1
-open3d>=0.14.1
-setuptools>=58.1.0
-joblib>=1.1.0
-tabulate>=0.8.9
-tqdm>=4.62.3
+open3d~=0.17.0
+tabulate~=0.9

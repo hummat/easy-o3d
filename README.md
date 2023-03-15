@@ -51,7 +51,11 @@ git clone https://github.com/hummat/easy-o3d
 ```
 Use Pythons package manager `pip` to install it into your current Python environment:
 ```commandline
-pip install /path/to/easy-o3d/repository/clone
+pip install -e /path/to/easy-o3d/repository/clone
+```
+Or to install it directly from git into your current Python environment:
+```commandline
+pip install git+https://github.com/hummat/easy-o3d
 ```
 To use the provided [scripts](https://github.com/hummat/easy-o3d/tree/master/scripts),
 also install the optional dependency `scikit-optimize` and `tabulate`:
@@ -65,11 +69,11 @@ manually and directly import the code from your local clone of the repository:
 ```commandline
 pip install /path/to/requirements.txt
 ```
-The required packages (and their version used during development) are:
-1. `open3d == 0.12.0`
-2. (`scikit-optimize == 0.8.1`, `tabulate == 0.8.9`)
+The required packages are:
+1. `open3d == 0.17.0`
+2. (`scikit-optimize == 0.9.0`, `tabulate == 0.9.0`)
 ```commandline
-pip install open3d==0.12.0 scikit-optimize==0.8.1 tabulate==0.8.9
+pip install open3d==0.17.0 scikit-optimize==0.9.0 tabulate==0.9.0
 ```
 
 ## Usage
