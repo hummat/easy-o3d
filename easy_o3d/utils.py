@@ -702,6 +702,7 @@ def eval_transformation_data(transformation_data: TransformationTypes) -> np.nda
         elif data.size == 9:
             T = np.eye(4)
             T[:3, :3] = data.reshape(3, 3)
+            return T
         else:
             raise ValueError(f"Transformation data needs 3, 4, 9 or 16 values but has {data.size}.")
     elif isinstance(data, list):
