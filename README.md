@@ -2,7 +2,7 @@
 Welcome to _Easy Open3D_, the easy-to-use wrapper around (as well as utility functions and scripts for) some of
 [Open3D](http://www.open3d.org) 's registration functionality.
 
-_Head over to the repository's [**GitHub** pages site](https://hummat.com/easy-o3d) for a prettier and more
+_Head over to the repository's [**GitHub** pages site](https://hummat.github.io/easy-o3d) for a prettier and more
 interactive version of this README!_
 
 ## What is registration?
