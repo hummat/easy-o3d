@@ -1,0 +1,40 @@
+name: Bug Report
+description: Report a bug or unexpected behavior
+labels: [bug]
+body:
+  - type: textarea
+    id: description
+    attributes:
+      label: Description
+      description: A clear description of the bug
+      placeholder: What happened? What did you expect to happen?
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to Reproduce
+      placeholder: |
+        1. Run `...`
+        2. ...
+        3. See error
+    validations:
+      required: true
+
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: OS, Python version, relevant package versions
+      placeholder: |
+        - OS: Ubuntu 22.04
+        - Python: 3.11
+      render: markdown
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Error Logs
+      description: Paste relevant error messages or logs
+      render: shell
